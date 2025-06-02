@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "DownloadManager"
 include(":app")
- 
+include(":download_manager")
