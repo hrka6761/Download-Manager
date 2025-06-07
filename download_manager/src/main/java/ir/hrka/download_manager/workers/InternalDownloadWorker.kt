@@ -9,8 +9,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import ir.hrka.download_manager.downloadCore.UrlConnectionDownloader
+import ir.hrka.download_manager.core.UrlConnectionDownloader
 import ir.hrka.download_manager.entities.FileDataModel
+import ir.hrka.download_manager.file.FileProvider
+import ir.hrka.download_manager.file.InternalFileProvider
 import ir.hrka.download_manager.utilities.Constants.FOREGROUND_NOTIFICATION_CHANNEL_ID
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_ACCESS_TOKEN
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DIRECTORY_NAME
@@ -27,14 +29,13 @@ import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DOWNLOAD_REMAINING_
 import ir.hrka.download_manager.listeners.DownloadListener
 import ir.hrka.download_manager.utilities.Constants.KEY_DOWNLOADED_FILE_PATH
 import ir.hrka.download_manager.utilities.Constants.KEY_DOWNLOAD_FAILED_MESSAGE
-import ir.hrka.download_manager.utilities.Constants.KEY_DOWNLOAD_LOCATION
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_CREATION_MODE
+import ir.hrka.download_manager.utilities.Constants.KEY_FILE_MIME_TYPE
 import ir.hrka.download_manager.utilities.Constants.KEY_RUN_IN_SERVICE
-import ir.hrka.download_manager.utilities.FileLocation
 import ir.hrka.download_manager.utilities.FileCreationMode
 import java.io.File
 
-class DownloadWorker(
+internal class InternalDownloadWorker(
     private val context: Context,
     private val params: WorkerParameters
 ) : CoroutineWorker(context, params) {
@@ -43,8 +44,23 @@ class DownloadWorker(
     private val notificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val notificationId: Int = params.id.hashCode() // Unique notification id
-    private lateinit var urlConnectionDownloader: UrlConnectionDownloader
     private val runInService = inputData.getBoolean(KEY_RUN_IN_SERVICE, false)
+    private val writeType = inputData.getInt(KEY_FILE_CREATION_MODE, 0)
+    private val internalFileProvider: FileProvider =
+        InternalFileProvider(context, FileCreationMode.entries[writeType])
+    private val urlConnectionDownloader = UrlConnectionDownloader(internalFileProvider)
+    private val fileData = FileDataModel(
+        fileUrl = inputData.getString(KEY_FILE_URL) ?: "",
+        fileName = inputData.getString(KEY_FILE_NAME) ?: "",
+        fileSuffix = inputData.getString(KEY_FILE_SUFFIX) ?: "",
+        fileDirName = inputData.getString(KEY_FILE_DIRECTORY_NAME) ?: "",
+        fileVersion = inputData.getString(KEY_FILE_VERSION_NAME),
+        fileMimeType = inputData.getString(KEY_FILE_MIME_TYPE),
+        isZip = inputData.getBoolean(KEY_FILE_IS_ZIP, false),
+        unzippedDirName = inputData.getString(KEY_FILE_UNZIPPED_DIRECTORY),
+        totalBytes = inputData.getLong(KEY_FILE_TOTAL_BYTES, 0L),
+        accessToken = inputData.getString(KEY_FILE_ACCESS_TOKEN)
+    )
 
 
     init {
@@ -65,37 +81,7 @@ class DownloadWorker(
         var failedMsg: String? = null
         var isWorkSuccess = false
 
-        val storageType = inputData.getInt(KEY_DOWNLOAD_LOCATION, 0)
-        val writeType = inputData.getInt(KEY_FILE_CREATION_MODE, 0)
-        val fileUrl = inputData.getString(KEY_FILE_URL)
-        val fileName = inputData.getString(KEY_FILE_NAME)
-        val fileSuffix = inputData.getString(KEY_FILE_SUFFIX)
-        val fileDirName = inputData.getString(KEY_FILE_DIRECTORY_NAME)
-        val fileVersion = inputData.getString(KEY_FILE_VERSION_NAME)
-        val isZip = inputData.getBoolean(KEY_FILE_IS_ZIP, false)
-        val unzippedDirName = inputData.getString(KEY_FILE_UNZIPPED_DIRECTORY)
-        val totalBytes = inputData.getLong(KEY_FILE_TOTAL_BYTES, 0L)
-        val accessToken = inputData.getString(KEY_FILE_ACCESS_TOKEN)
-        val fileData = FileDataModel(
-            fileUrl = fileUrl ?: "",
-            fileName = fileName ?: "",
-            fileSuffix = fileSuffix ?: "",
-            fileDirName = fileDirName ?: "",
-            fileVersion = fileVersion,
-            isZip = isZip,
-            unzippedDirName = unzippedDirName,
-            totalBytes = totalBytes,
-            accessToken = accessToken
-        )
-
-        urlConnectionDownloader =
-            UrlConnectionDownloader(
-                FileLocation.entries[storageType],
-                FileCreationMode.entries[writeType]
-            )
-
         urlConnectionDownloader.download(
-            context = context,
             fileData = fileData,
             listener = object : DownloadListener {
                 override suspend fun onStartDownload(file: File) {
@@ -122,14 +108,13 @@ class DownloadWorker(
 
                     setProgress(data)
 
-                    if (runInService) {
+                    if (runInService)
                         setForeground(
                             createRunningForegroundInfo(
                                 progress = (downloadedBytes * 100 / fileData.totalBytes).toInt(),
                                 filename = file.name
                             )
                         )
-                    }
                 }
 
                 override suspend fun onDownloadCompleted(file: File) {

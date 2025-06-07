@@ -1,6 +1,6 @@
 package ir.hrka.download_manager.listeners
 
-interface DownloadWorkListener {
+interface DownloadWorkerListener {
 
     fun onDownloadEnqueued()
     fun onDownloadRunning(receivedBytes: Long, downloadRate: Long, remainingTime: Long)

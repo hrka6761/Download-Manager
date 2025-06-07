@@ -1,13 +1,8 @@
-package ir.hrka.download_manager.downloadCore
+package ir.hrka.download_manager.core
 
-import android.content.Context
-import android.os.Environment
-import android.util.Log
 import ir.hrka.download_manager.entities.FileDataModel
+import ir.hrka.download_manager.file.FileProvider
 import ir.hrka.download_manager.listeners.DownloadListener
-import ir.hrka.download_manager.utilities.FileLocation
-import ir.hrka.download_manager.utilities.FileLocation.InternalStorage
-import ir.hrka.download_manager.utilities.FileCreationMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -16,15 +11,10 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import kotlin.jvm.Throws
 
-internal class UrlConnectionDownloader(
-    val fileLocation: FileLocation,
-    val fileCreationMode: FileCreationMode
-) : Downloader {
+internal class UrlConnectionDownloader(private val fileProvider: FileProvider) : Downloader {
 
     override suspend fun download(
-        context: Context,
         fileData: FileDataModel,
         listener: DownloadListener
     ) {
@@ -33,11 +23,8 @@ internal class UrlConnectionDownloader(
 
         return withContext(Dispatchers.IO) {
             try {
-                // Create a file to write input bytes into
-                val outputFile = provideOutputFile(
-                    context = context,
-                    fileData = fileData
-                )
+                // Provide a file to write input bytes into
+                val outputFile = fileProvider.provide(fileData)
 
                 listener.onStartDownload(outputFile)
 
@@ -117,91 +104,6 @@ internal class UrlConnectionDownloader(
         }
     }
 
-
-    private fun provideOutputFile(
-        context: Context,
-        fileData: FileDataModel
-    ): File {
-        var outputFile = if (fileLocation == InternalStorage)
-            createFileInInternalStorage(
-                context = context,
-                directoryName = fileData.fileDirName,
-                version = fileData.fileVersion,
-                fileFullName = fileData.getFullName()
-            )
-        else
-            createFileInSharedStorage(
-                directoryName = fileData.fileDirName,
-                version = fileData.fileVersion,
-                fileFullName = fileData.getFullName()
-            )
-
-        if (outputFile.exists())
-            when (fileCreationMode) {
-                FileCreationMode.Overwrite -> outputFile.delete()
-                FileCreationMode.CreateNew -> {
-                    val newOutputFile =
-                        File(
-                            outputFile.absolutePath.replace(
-                                fileData.getFullName(),
-                                fileData.getFullName("${System.currentTimeMillis()}")
-                            )
-                        )
-                    outputFile = newOutputFile
-                }
-            }
-
-        return outputFile
-    }
-
-    private fun createFileInInternalStorage(
-        context: Context,
-        directoryName: String,
-        version: String?,
-        fileFullName: String
-    ): File {
-        val directories = mutableListOf(directoryName)
-        version?.let { directories.add(it) }
-
-        val outputDir = File(
-            context.getExternalFilesDir(null),
-            directories.joinToString(separator = File.separator)
-        )
-
-        if (!outputDir.exists()) {
-            outputDir.mkdirs()
-        }
-
-        return File(listOf(outputDir, fileFullName).joinToString(separator = File.separator))
-    }
-
-    @Throws(SecurityException::class)
-    private fun createFileInSharedStorage(
-        directoryName: String,
-        version: String?,
-        fileFullName: String
-    ): File {
-        if (!Environment.isExternalStorageManager()) {
-            throw SecurityException(
-                "Missing permission to access shared storage. " +
-                        "Ensure MANAGE_EXTERNAL_STORAGE or WRITE_EXTERNAL_STORAGE permission is granted."
-            )
-        }
-
-        val directories = mutableListOf(directoryName)
-        version?.let { directories.add(it) }
-
-        val outputDir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            directories.joinToString(separator = File.separator)
-        )
-
-        if (!outputDir.exists()) {
-            outputDir.mkdirs()
-        }
-
-        return File(outputDir.absolutePath, fileFullName)
-    }
 
     private fun provideConnection(
         fileUrl: String,

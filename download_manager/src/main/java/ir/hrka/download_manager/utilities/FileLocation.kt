@@ -1,6 +1,10 @@
 package ir.hrka.download_manager.utilities
 
-enum class FileLocation {
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OneTimeWorkRequestBuilder
+import ir.hrka.download_manager.workers.InternalDownloadWorker
 
-    InternalStorage, SharedStorage
+enum class FileLocation(val workRequest: OneTimeWorkRequest.Builder) {
+
+    InternalStorage(OneTimeWorkRequestBuilder<InternalDownloadWorker>())
 }

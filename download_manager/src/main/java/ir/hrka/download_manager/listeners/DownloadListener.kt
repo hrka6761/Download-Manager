@@ -2,7 +2,7 @@ package ir.hrka.download_manager.listeners
 
 import java.io.File
 
-interface DownloadListener {
+internal interface DownloadListener {
 
     suspend fun onStartDownload(file: File)
     suspend fun onProgressUpdate(

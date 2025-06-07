@@ -6,6 +6,7 @@ data class FileDataModel(
     val fileSuffix: String,
     val fileDirName: String,
     val fileVersion: String?,
+    val fileMimeType: String?,
     val isZip: Boolean,
     val unzippedDirName: String?,
     val totalBytes: Long,
