@@ -32,6 +32,18 @@ import ir.hrka.download_manager.utilities.Constants.KEY_RUN_IN_SERVICE
 import ir.hrka.download_manager.utilities.FileLocation
 import ir.hrka.download_manager.utilities.FileCreationMode
 
+/**
+ * Manages file downloads using Android's WorkManager API.
+ *
+ * Supports downloading files to different locations with options for file creation modes,
+ * running downloads as foreground services, and reporting progress and status through listeners.
+ *
+ * @property context The application context used to initialize WorkManager and file providers.
+ * @property fileLocation The target location where files will be downloaded. Defaults to [FileLocation.InternalStorage].
+ * @property fileCreationMode Determines how existing files are handled (overwrite or create new). Defaults to [FileCreationMode.Overwrite].
+ * @property listener Optional listener for receiving download progress and status updates.
+ * @property runInService Whether the download should run in a foreground service, requiring appropriate permissions.
+ */
 class DownloadManager private constructor(
     private val context: Context,
     private val fileLocation: FileLocation = FileLocation.InternalStorage,
@@ -42,7 +54,17 @@ class DownloadManager private constructor(
 
     private val workManager = WorkManager.getInstance(context)
 
-
+    /**
+     * Starts a download for the specified [fileData].
+     *
+     * @throws SecurityException if [runInService] is true and the app lacks required
+     * permissions (`FOREGROUND_SERVICE` or `POST_NOTIFICATIONS`).
+     *
+     * This method enqueues a WorkManager task to perform the download asynchronously.
+     * If a listener is set, it observes the work state changes and forwards events.
+     *
+     * @param fileData Data model describing the file to download, including URL, filename, location, etc.
+     */
     @Throws(SecurityException::class)
     fun startDownload(
         fileData: FileDataModel
@@ -132,7 +154,11 @@ class DownloadManager private constructor(
         workManager.enqueueUniqueWork(fileData.fileName, ExistingWorkPolicy.REPLACE, workRequest)
     }
 
-
+    /**
+     * Checks if the app has the `FOREGROUND_SERVICE` permission.
+     *
+     * @return true if permission is granted, false otherwise.
+     */
     private fun hasForegroundServicePermission(): Boolean {
         return ContextCompat.checkSelfPermission(
             context,
@@ -140,6 +166,11 @@ class DownloadManager private constructor(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Checks if the app has the `POST_NOTIFICATIONS` permission.
+     *
+     * @return true if permission is granted, false otherwise.
+     */
     private fun hasNotificationPermission(): Boolean {
         return ContextCompat.checkSelfPermission(
             context,
@@ -147,7 +178,21 @@ class DownloadManager private constructor(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-
+    /**
+     * Builder for creating [DownloadManager] instances.
+     *
+     * Usage example:
+     * ```
+     * val downloadManager = DownloadManager.Builder(context)
+     *      .setFileLocation(FileLocation.InternalStorage)
+     *      .setFileCreationMode(FileCreationMode.CreateNew)
+     *      .setDownloadListener(myListener)
+     *      .runInService()
+     *      .build()
+     * ```
+     *
+     * @property context Application context used for WorkManager and file operations.
+     */
     class Builder(private val context: Context) {
 
         private lateinit var mFileLocation: FileLocation
@@ -155,7 +200,9 @@ class DownloadManager private constructor(
         private var mListener: DownloadWorkerListener? = null
         private var mRunInService: Boolean = false
 
-
+        /**
+         * Builds and returns a new [DownloadManager] instance.
+         */
         fun build(): DownloadManager =
             DownloadManager(
                 context = context,
@@ -165,15 +212,40 @@ class DownloadManager private constructor(
                 runInService = mRunInService
             )
 
+        /**
+         * Sets the file location where downloads will be stored.
+         *
+         * @param fileLocation The [FileLocation] to use.
+         * @return This builder instance.
+         */
         fun setFileLocation(fileLocation: FileLocation) =
             apply { mFileLocation = fileLocation }
 
+        /**
+         * Sets the mode for creating or overwriting files.
+         *
+         * @param fileCreationMode The [FileCreationMode] to use.
+         * @return This builder instance.
+         */
         fun setFileCreationMode(fileCreationMode: FileCreationMode) =
             apply { mFileCreationMode = fileCreationMode }
 
+        /**
+         * Sets the listener to receive download progress and status updates.
+         *
+         * @param listener The [DownloadWorkerListener] to notify.
+         * @return This builder instance.
+         */
         fun setDownloadListener(listener: DownloadWorkerListener) =
             apply { mListener = listener }
 
+        /**
+         * Configures the download to run in a foreground service.
+         *
+         * Requires `FOREGROUND_SERVICE` and `POST_NOTIFICATIONS` permissions.
+         *
+         * @return This builder instance.
+         */
         fun runInService() =
             apply { mRunInService = true }
     }

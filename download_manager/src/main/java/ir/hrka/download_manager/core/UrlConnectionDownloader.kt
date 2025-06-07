@@ -12,8 +12,23 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * A concrete implementation of the [Downloader] interface that downloads files using [HttpURLConnection].
+ *
+ * This class supports resuming interrupted downloads by using HTTP Range requests. It also
+ * provides real-time progress updates including download rate and estimated time remaining.
+ *
+ * @property fileProvider Provides the output [File] where the downloaded content should be saved.
+ */
 internal class UrlConnectionDownloader(private val fileProvider: FileProvider) : Downloader {
 
+    /**
+     * Starts downloading a file using [HttpURLConnection]. Supports progress reporting and
+     * resuming downloads if a partial file already exists.
+     *
+     * @param fileData Metadata for the file to download including URL, token, and total size.
+     * @param listener Callback listener for download status updates such as start, progress, success, and failure.
+     */
     override suspend fun download(
         fileData: FileDataModel,
         listener: DownloadListener
@@ -104,7 +119,17 @@ internal class UrlConnectionDownloader(private val fileProvider: FileProvider) :
         }
     }
 
-
+    /**
+     * Creates and configures a [HttpURLConnection] for the provided file URL.
+     *
+     * If an access token is provided, it is set as a Bearer token in the Authorization header.
+     * If a partial file already exists, a `Range` header is added to resume the download.
+     *
+     * @param fileUrl The URL of the file to be downloaded.
+     * @param accessToken Optional bearer token used for authorization.
+     * @param outputFile The file where data is being downloaded.
+     * @return A configured [HttpURLConnection] instance ready to connect.
+     */
     private fun provideConnection(
         fileUrl: String,
         accessToken: String?,
@@ -123,6 +148,14 @@ internal class UrlConnectionDownloader(private val fileProvider: FileProvider) :
         return connection
     }
 
+    /**
+     * Parses the `Content-Range` header of the response to extract the starting byte position.
+     *
+     * This is useful for resuming partially downloaded files.
+     *
+     * @param connection The [HttpURLConnection] with a response containing the Content-Range header.
+     * @return The starting byte position from the server response.
+     */
     private fun getStartByte(connection: HttpURLConnection): Long {
         val contentRange = connection.getHeaderField("Content-Range")
         var startByte = 0L

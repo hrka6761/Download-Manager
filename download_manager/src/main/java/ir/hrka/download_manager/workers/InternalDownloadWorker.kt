@@ -35,6 +35,21 @@ import ir.hrka.download_manager.utilities.Constants.KEY_RUN_IN_SERVICE
 import ir.hrka.download_manager.utilities.FileCreationMode
 import java.io.File
 
+/**
+ * A [CoroutineWorker] that downloads a file in the background using [UrlConnectionDownloader]
+ * and saves it internally using [InternalFileProvider].
+ *
+ * This worker supports running as a foreground service with a persistent notification
+ * displaying download progress.
+ *
+ * The worker reads required parameters from the [inputData] bundle, including:
+ * - URL, file name, suffix, directory name, version, mime type, zip flag, unzipped directory,
+ *   total file size, and access token for the file.
+ * - Flags to indicate if the worker should run in a foreground service and the file creation mode.
+ *
+ * @property context The application context.
+ * @property params Worker parameters containing input data and runtime info.
+ */
 internal class InternalDownloadWorker(
     private val context: Context,
     private val params: WorkerParameters
@@ -62,7 +77,17 @@ internal class InternalDownloadWorker(
         accessToken = inputData.getString(KEY_FILE_ACCESS_TOKEN)
     )
 
-
+    /**
+     * Initializes the notification channel required for foreground service notifications.
+     *
+     * This block creates a notification channel with the ID [FOREGROUND_NOTIFICATION_CHANNEL_ID]
+     * named "Download manager" with low importance to be used for download notifications.
+     * The channel creation happens only once when the worker is set to run in a foreground service
+     * mode ([runInService] is true) and the channel has not yet been created ([channelCreated] is false).
+     *
+     * Notification channels are mandatory on Android 8.0 (API level 26) and above for notifications
+     * to appear properly.
+     */
     init {
         if (runInService && !channelCreated) {
             val channel = NotificationChannel(
@@ -76,6 +101,16 @@ internal class InternalDownloadWorker(
     }
 
 
+    /**
+     * Performs the download work asynchronously.
+     *
+     * Uses [UrlConnectionDownloader] to download the file specified by [fileData].
+     * Reports progress via a [DownloadListener] and updates the foreground notification
+     * if running as a foreground service.
+     *
+     * @return [Result.success] with the downloaded file path on success,
+     * or [Result.failure] with an error message on failure.
+     */
     override suspend fun doWork(): Result {
         var downloadedFile: File? = null
         var failedMsg: String? = null
@@ -143,7 +178,13 @@ internal class InternalDownloadWorker(
         }
     }
 
-
+    /**
+     * Creates a [ForegroundInfo] with a progress notification for the download.
+     *
+     * @param progress Download progress as a percentage (0-100).
+     * @param filename Name of the file being downloaded.
+     * @return A [ForegroundInfo] object to update the foreground notification.
+     */
     private fun createRunningForegroundInfo(progress: Int, filename: String): ForegroundInfo {
         var title = "Downloading $filename"
         val content = "Downloading in progress: $progress%"
