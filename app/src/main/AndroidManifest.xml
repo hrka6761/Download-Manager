@@ -26,12 +26,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:node="merge">
+        </service>
     </application>
-
-    <service
-        android:name="androidx.work.impl.foreground.SystemForegroundService"
-        android:foregroundServiceType="dataSync"
-        android:exported="false"
-        tools:node="merge">
-    </service>
 </manifest>

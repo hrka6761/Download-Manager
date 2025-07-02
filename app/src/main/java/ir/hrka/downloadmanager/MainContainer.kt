@@ -1,45 +1,62 @@
 package ir.hrka.downloadmanager
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ir.hrka.download_manager.entities.FileDataModel
 import ir.hrka.download_manager.utilities.FileCreationMode
 import ir.hrka.download_manager.utilities.FileLocation
 import ir.hrka.downloadmanager.ui.theme.DownloadManagerTheme
 
 @Composable
 fun AppContent(modifier: Modifier = Modifier) {
+    val activity = LocalActivity.current as MainActivity
+    val mainViewModel = MainViewModel()
+
     DownloadManagerTheme {
         Scaffold(
             modifier = modifier.fillMaxSize()
         ) { innerPaddings ->
-            var url by remember { mutableStateOf("") }
-            var fileName by remember { mutableStateOf("") }
-            var fileSuffix by remember { mutableStateOf("") }
-            var directoryName by remember { mutableStateOf("") }
-            var version by remember { mutableStateOf("") }
+            var url by remember { mutableStateOf("https://cafebazaar.ir/download/bazaar.apk") }
+            var fileName by remember { mutableStateOf("bazaar") }
+            var fileSize by remember { mutableStateOf("22216704") }
+            var fileSuffix by remember { mutableStateOf("apk") }
+            var directoryName by remember { mutableStateOf("models") }
+            var version by remember { mutableStateOf("1.0.0") }
             var selectedLocation by remember {
                 mutableStateOf<FileLocation>(FileLocation.InternalStorage)
             }
@@ -47,6 +64,8 @@ fun AppContent(modifier: Modifier = Modifier) {
                 mutableStateOf<FileCreationMode>(FileCreationMode.Overwrite)
             }
             var runInService by remember { mutableStateOf(false) }
+            val downloadStatus by mainViewModel.downloadStatus.collectAsState()
+            val downloadProgress by mainViewModel.downloadProgress.collectAsState()
 
             Column(
                 modifier = modifier
@@ -71,6 +90,15 @@ fun AppContent(modifier: Modifier = Modifier) {
                     value = fileName,
                     onValueChange = { fileName = it },
                     label = { Text("File Name") }
+                )
+
+                OutlinedTextField(
+                    modifier = modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    value = fileSize,
+                    onValueChange = { fileSize = it },
+                    label = { Text("File Size") }
                 )
 
                 OutlinedTextField(
@@ -167,7 +195,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                         .padding(8.dp)
                         .clickable {
                             runInService = !runInService
-                        } // Optional: make row clickable too
+                        }
                 ) {
                     Checkbox(
                         checked = runInService,
@@ -185,14 +213,158 @@ fun AppContent(modifier: Modifier = Modifier) {
                         .padding(horizontal = 8.dp, vertical = 24.dp),
                     enabled = url.isNotEmpty() &&
                             fileName.isNotEmpty() &&
+                            fileSize.isNotEmpty() &&
                             fileSuffix.isNotEmpty() &&
                             directoryName.isNotEmpty() &&
                             version.isNotEmpty(),
-                    onClick = {}
+                    onClick = {
+                        mainViewModel.startDownload(
+                            activity = activity,
+                            fileDataModel = FileDataModel(
+                                fileUrl = url,
+                                fileName = fileName,
+                                fileSuffix = fileSuffix,
+                                fileDirName = directoryName,
+                                fileVersion = version,
+                                fileMimeType = null,
+                                isZip = false,
+                                unzippedDirName = null,
+                                totalBytes = fileSize.toLong(),
+                                accessToken = null,
+                            ),
+                            fileLocation = selectedLocation,
+                            creationMode = selectedCreationMode
+                        )
+                    }
                 ) {
                     Text("Start Download")
                 }
             }
+
+            if (downloadStatus != DownloadStatus.None)
+                AlertDialog(
+                    modifier = modifier.fillMaxWidth(),
+                    onDismissRequest = {},
+                    confirmButton = {
+                        when (downloadStatus) {
+                            is DownloadStatus.None -> {}
+                            is DownloadStatus.Downloading -> {}
+                            is DownloadStatus.DownloadSuccess -> {
+                                Button(
+                                    onClick = {
+                                        mainViewModel.setDownloadStatus(DownloadStatus.None)
+                                        mainViewModel.checkDownload(activity)
+                                    }
+                                ) {
+                                    Text(
+                                        text = "Check Download",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                }
+                            }
+
+                            is DownloadStatus.DownloadFailed -> {
+                                Button(
+                                    onClick = { mainViewModel.retryDownload() }
+                                ) {
+                                    Text(
+                                        text = "Retry",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        when (downloadStatus) {
+                            is DownloadStatus.None -> {}
+
+                            is DownloadStatus.Downloading -> {
+                                TextButton(
+                                    onClick = { mainViewModel.cancelDownload() }
+                                ) {
+                                    Text("Cancel Download")
+                                }
+                            }
+
+                            is DownloadStatus.DownloadSuccess, DownloadStatus.DownloadFailed -> {
+                                TextButton(
+                                    onClick = { mainViewModel.setDownloadStatus(DownloadStatus.None) }
+                                ) {
+                                    Text("Cancel")
+                                }
+                            }
+                        }
+                    },
+                    icon = {
+                        Icon(
+                            painterResource(R.drawable.download),
+                            contentDescription = null
+                        )
+                    },
+                    title = {
+                        Text(
+                            text =
+                                when (downloadStatus) {
+                                    is DownloadStatus.None -> {
+                                        ""
+                                    }
+
+                                    is DownloadStatus.Downloading -> {
+                                        "Downloading"
+                                    }
+
+                                    is DownloadStatus.DownloadSuccess -> {
+                                        "Download Success"
+                                    }
+
+                                    is DownloadStatus.DownloadFailed -> {
+                                        "Download Failed"
+                                    }
+                                }
+                        )
+                    },
+                    text = {
+                        when (downloadStatus) {
+                            is DownloadStatus.None -> {}
+                            is DownloadStatus.Downloading -> {
+                                Column(
+                                    modifier = modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    LinearProgressIndicator(
+                                        modifier = modifier.fillMaxWidth(),
+                                        progress = { downloadProgress }
+                                    )
+
+                                    Spacer(
+                                        modifier = modifier
+                                            .fillMaxWidth()
+                                            .height(8.dp)
+                                    )
+
+                                    Text(
+                                        text = "${(downloadProgress * 100).toInt()} %",
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+
+                            is DownloadStatus.DownloadSuccess -> {
+                                "Download successfully done."
+                            }
+
+                            is DownloadStatus.DownloadFailed -> {
+                                ""
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 16.dp
+                )
         }
     }
 }
