@@ -20,7 +20,14 @@ import java.net.URL
  *
  * @property fileProvider Provides the output [File] where the downloaded content should be saved.
  */
-internal class UrlConnectionDownloader(private val fileProvider: FileProvider) : Downloader {
+internal class UrlConnectionDownloader(
+    private val fileProvider: FileProvider
+) : Downloader {
+
+    private val TAG = "DM_UrlConnectionDownloader"
+    private lateinit var connection: HttpURLConnection
+    private var inputStream: InputStream? = null
+    private var outputStream: OutputStream? = null
 
     /**
      * Starts downloading a file using [HttpURLConnection]. Supports progress reporting and
@@ -29,22 +36,21 @@ internal class UrlConnectionDownloader(private val fileProvider: FileProvider) :
      * @param fileData Metadata for the file to download including URL, token, and total size.
      * @param listener Callback listener for download status updates such as start, progress, success, and failure.
      */
-    override suspend fun download(
+    override suspend fun startDownload(
         fileData: FileDataModel,
         listener: DownloadListener
     ) {
-        var inputStream: InputStream? = null
-        var outputStream: OutputStream? = null
+        var outputFile: File? = null
 
-        return withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             try {
                 // Provide a file to write input bytes into
-                val outputFile = fileProvider.provide(fileData)
+                outputFile = fileProvider.provide(fileData)
 
                 listener.onStartDownload(outputFile)
 
                 // Create a connection with server to read bytes from
-                val connection = provideConnection(
+                connection = provideConnection(
                     fileUrl = fileData.fileUrl,
                     accessToken = fileData.accessToken,
                     outputFile = outputFile
@@ -71,6 +77,7 @@ internal class UrlConnectionDownloader(private val fileProvider: FileProvider) :
                     outputStream.write(buffer, 0, bytesRead)
                     downloadedBytes += bytesRead
                     deltaBytes += bytesRead
+
 
                     // Report progress every 200 ms.
                     val curTs = System.currentTimeMillis()
@@ -111,12 +118,17 @@ internal class UrlConnectionDownloader(private val fileProvider: FileProvider) :
 
                 listener.onDownloadCompleted(outputFile)
             } catch (e: Exception) {
-                listener.onDownloadFailed(e)
+                listener.onDownloadFailed(outputFile, e)
             } finally {
-                outputStream?.close()
-                inputStream?.close()
+                stopDownload()
             }
         }
+    }
+
+    override suspend fun stopDownload() {
+        outputStream?.close()
+        inputStream?.close()
+        connection.disconnect()
     }
 
     /**

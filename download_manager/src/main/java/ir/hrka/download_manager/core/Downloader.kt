@@ -19,5 +19,7 @@ internal interface Downloader {
      * @param fileData The metadata of the file to be downloaded.
      * @param listener The listener to receive callbacks for progress, success, and failure.
      */
-    suspend fun download(fileData: FileDataModel, listener: DownloadListener)
+    suspend fun startDownload(fileData: FileDataModel, listener: DownloadListener)
+
+    suspend fun stopDownload()
 }

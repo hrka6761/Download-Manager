@@ -44,5 +44,5 @@ internal interface DownloadListener {
      *
      * @param e The [Exception] that caused the failure.
      */
-    suspend fun onDownloadFailed(e: Exception)
+    suspend fun onDownloadFailed(file: File?, e: Exception)
 }

@@ -3,6 +3,7 @@ package ir.hrka.download_manager
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
@@ -19,18 +20,16 @@ import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DIRECTORY_NAME
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DOWNLOAD_RATE
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DOWNLOAD_RECEIVED_BYTES
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DOWNLOAD_REMAINING_MS
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_IS_ZIP
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_NAME
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_SUFFIX
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_TOTAL_BYTES
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_UNZIPPED_DIRECTORY
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_URL
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_VERSION_NAME
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_CREATION_MODE
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_MIME_TYPE
 import ir.hrka.download_manager.utilities.Constants.KEY_RUN_IN_SERVICE
 import ir.hrka.download_manager.utilities.FileLocation
 import ir.hrka.download_manager.utilities.FileCreationMode
+import java.util.UUID
 
 /**
  * Manages file downloads using Android's WorkManager API.
@@ -53,6 +52,7 @@ class DownloadManager private constructor(
 ) {
 
     private val workManager = WorkManager.getInstance(context)
+    private var requestId: UUID? = null
 
     /**
      * Starts a download for the specified [fileData].
@@ -84,12 +84,9 @@ class DownloadManager private constructor(
             .putInt(KEY_FILE_CREATION_MODE, fileCreationMode.ordinal)
             .putString(KEY_FILE_URL, fileData.fileUrl)
             .putString(KEY_FILE_NAME, fileData.fileName)
-            .putString(KEY_FILE_SUFFIX, fileData.fileSuffix)
+            .putString(KEY_FILE_SUFFIX, fileData.fileExtension)
             .putString(KEY_FILE_DIRECTORY_NAME, fileData.fileDirName)
             .putString(KEY_FILE_VERSION_NAME, fileData.fileVersion)
-            .putString(KEY_FILE_MIME_TYPE, fileData.fileMimeType)
-            .putBoolean(KEY_FILE_IS_ZIP, fileData.isZip)
-            .putString(KEY_FILE_UNZIPPED_DIRECTORY, fileData.unzippedDirName)
             .putLong(KEY_FILE_TOTAL_BYTES, fileData.totalBytes)
             .putString(KEY_FILE_ACCESS_TOKEN, fileData.accessToken)
             .build()
@@ -101,57 +98,65 @@ class DownloadManager private constructor(
                 .addTag(DOWNLOAD_MANAGER_TAG)
                 .build()
 
+        requestId = workRequest.id
+
         listener?.let { listener ->
-            workManager
-                .getWorkInfoByIdLiveData(workRequest.id)
-                .observeForever { workInfo ->
-                    workInfo?.let {
-                        when (workInfo.state) {
-                            WorkInfo.State.ENQUEUED -> {
-                                listener.onDownloadEnqueued()
-                            }
+            requestId?.let {
+                workManager
+                    .getWorkInfoByIdLiveData(it)
+                    .observeForever { workInfo ->
+                        workInfo?.let {
+                            when (workInfo.state) {
+                                WorkInfo.State.ENQUEUED -> {
+                                    listener.onDownloadEnqueued()
+                                }
 
-                            WorkInfo.State.RUNNING -> {
-                                val receivedBytes =
-                                    workInfo.progress.getLong(KEY_FILE_DOWNLOAD_RECEIVED_BYTES, 0L)
-                                val downloadRate =
-                                    workInfo.progress.getLong(KEY_FILE_DOWNLOAD_RATE, 0L)
-                                val remainingTime =
-                                    workInfo.progress.getLong(KEY_FILE_DOWNLOAD_REMAINING_MS, 0L)
+                                WorkInfo.State.RUNNING -> {
+                                    val receivedBytes =
+                                        workInfo.progress.getLong(KEY_FILE_DOWNLOAD_RECEIVED_BYTES, 0L)
+                                    val downloadRate =
+                                        workInfo.progress.getLong(KEY_FILE_DOWNLOAD_RATE, 0L)
+                                    val remainingTime =
+                                        workInfo.progress.getLong(KEY_FILE_DOWNLOAD_REMAINING_MS, 0L)
 
-                                listener.onDownloadRunning(
-                                    receivedBytes = receivedBytes,
-                                    downloadRate = downloadRate,
-                                    remainingTime = remainingTime
-                                )
-                            }
+                                    listener.onDownloadRunning(
+                                        receivedBytes = receivedBytes,
+                                        downloadRate = downloadRate,
+                                        remainingTime = remainingTime
+                                    )
+                                }
 
-                            WorkInfo.State.SUCCEEDED -> {
-                                val downloadedFilePath =
-                                    workInfo.outputData.getString(KEY_DOWNLOADED_FILE_PATH)
-                                listener.onDownloadSuccess(downloadedFilePath)
-                            }
+                                WorkInfo.State.SUCCEEDED -> {
+                                    val downloadedFilePath =
+                                        workInfo.outputData.getString(KEY_DOWNLOADED_FILE_PATH)
+                                    listener.onDownloadSuccess(downloadedFilePath)
+                                }
 
-                            WorkInfo.State.BLOCKED -> {
-                                listener.onDownloadBlocked()
-                            }
+                                WorkInfo.State.BLOCKED -> {
+                                    listener.onDownloadBlocked()
+                                }
 
-                            WorkInfo.State.FAILED -> {
-                                val downloadFailedMsg =
-                                    workInfo.outputData.getString(KEY_DOWNLOAD_FAILED_MESSAGE)
+                                WorkInfo.State.FAILED -> {
+                                    val downloadFailedMsg =
+                                        workInfo.outputData.getString(KEY_DOWNLOAD_FAILED_MESSAGE)
 
-                                listener.onDownloadFailed(downloadFailedMsg)
-                            }
+                                    listener.onDownloadFailed(downloadFailedMsg)
+                                }
 
-                            WorkInfo.State.CANCELLED -> {
-                                listener.onDownloadCancelled()
+                                WorkInfo.State.CANCELLED -> {
+                                    listener.onDownloadCancelled()
+                                }
                             }
                         }
                     }
-                }
+            }
         }
 
         workManager.enqueueUniqueWork(fileData.fileName, ExistingWorkPolicy.REPLACE, workRequest)
+    }
+
+    fun stopDownload() {
+        requestId?.let { workManager.cancelWorkById(it) }
     }
 
     /**
@@ -172,10 +177,13 @@ class DownloadManager private constructor(
      * @return true if permission is granted, false otherwise.
      */
     private fun hasNotificationPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        else
+            true
     }
 
     /**

@@ -223,17 +223,15 @@ fun AppContent(modifier: Modifier = Modifier) {
                             fileDataModel = FileDataModel(
                                 fileUrl = url,
                                 fileName = fileName,
-                                fileSuffix = fileSuffix,
+                                fileExtension = fileSuffix,
                                 fileDirName = directoryName,
                                 fileVersion = version,
-                                fileMimeType = null,
-                                isZip = false,
-                                unzippedDirName = null,
                                 totalBytes = fileSize.toLong(),
                                 accessToken = null,
                             ),
                             fileLocation = selectedLocation,
-                            creationMode = selectedCreationMode
+                            creationMode = selectedCreationMode,
+                            runInService = runInService
                         )
                     }
                 ) {
@@ -248,6 +246,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                     confirmButton = {
                         when (downloadStatus) {
                             is DownloadStatus.None -> {}
+                            is DownloadStatus.StartDownload -> {}
                             is DownloadStatus.Downloading -> {}
                             is DownloadStatus.DownloadSuccess -> {
                                 Button(
@@ -281,7 +280,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                         when (downloadStatus) {
                             is DownloadStatus.None -> {}
 
-                            is DownloadStatus.Downloading -> {
+                            is DownloadStatus.Downloading, DownloadStatus.StartDownload -> {
                                 TextButton(
                                     onClick = { mainViewModel.cancelDownload() }
                                 ) {
@@ -311,6 +310,9 @@ fun AppContent(modifier: Modifier = Modifier) {
                                     is DownloadStatus.None -> {
                                         ""
                                     }
+                                    is DownloadStatus.StartDownload -> {
+                                        "Start Download"
+                                    }
 
                                     is DownloadStatus.Downloading -> {
                                         "Downloading"
@@ -329,7 +331,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                     text = {
                         when (downloadStatus) {
                             is DownloadStatus.None -> {}
-                            is DownloadStatus.Downloading -> {
+                            is DownloadStatus.Downloading, DownloadStatus.StartDownload -> {
                                 Column(
                                     modifier = modifier.fillMaxWidth(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -354,11 +356,11 @@ fun AppContent(modifier: Modifier = Modifier) {
                             }
 
                             is DownloadStatus.DownloadSuccess -> {
-                                "Download successfully done."
+                                Text(text = "Download successfully done.")
                             }
 
                             is DownloadStatus.DownloadFailed -> {
-                                ""
+                                Text(text = "Failed to download the file.")
                             }
                         }
                     },

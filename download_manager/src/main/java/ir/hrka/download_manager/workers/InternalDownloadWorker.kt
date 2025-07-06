@@ -12,15 +12,13 @@ import androidx.work.WorkerParameters
 import ir.hrka.download_manager.core.UrlConnectionDownloader
 import ir.hrka.download_manager.entities.FileDataModel
 import ir.hrka.download_manager.file.FileProvider
-import ir.hrka.download_manager.file.InternalFileProvider
+import ir.hrka.download_manager.file.PrivateInternalFileProvider
 import ir.hrka.download_manager.utilities.Constants.FOREGROUND_NOTIFICATION_CHANNEL_ID
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_ACCESS_TOKEN
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DIRECTORY_NAME
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_IS_ZIP
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_NAME
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_SUFFIX
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_TOTAL_BYTES
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_UNZIPPED_DIRECTORY
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_URL
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_VERSION_NAME
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_DOWNLOAD_RATE
@@ -30,14 +28,13 @@ import ir.hrka.download_manager.listeners.DownloadListener
 import ir.hrka.download_manager.utilities.Constants.KEY_DOWNLOADED_FILE_PATH
 import ir.hrka.download_manager.utilities.Constants.KEY_DOWNLOAD_FAILED_MESSAGE
 import ir.hrka.download_manager.utilities.Constants.KEY_FILE_CREATION_MODE
-import ir.hrka.download_manager.utilities.Constants.KEY_FILE_MIME_TYPE
 import ir.hrka.download_manager.utilities.Constants.KEY_RUN_IN_SERVICE
 import ir.hrka.download_manager.utilities.FileCreationMode
 import java.io.File
 
 /**
  * A [CoroutineWorker] that downloads a file in the background using [UrlConnectionDownloader]
- * and saves it internally using [InternalFileProvider].
+ * and saves it internally using [PrivateInternalFileProvider].
  *
  * This worker supports running as a foreground service with a persistent notification
  * displaying download progress.
@@ -55,24 +52,22 @@ internal class InternalDownloadWorker(
     private val params: WorkerParameters
 ) : CoroutineWorker(context, params) {
 
+    private val TAG = "DM_InternalDownloadWorker"
     private var channelCreated = false
     private val notificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val notificationId: Int = params.id.hashCode() // Unique notification id
     private val runInService = inputData.getBoolean(KEY_RUN_IN_SERVICE, false)
     private val writeType = inputData.getInt(KEY_FILE_CREATION_MODE, 0)
-    private val internalFileProvider: FileProvider =
-        InternalFileProvider(context, FileCreationMode.entries[writeType])
-    private val urlConnectionDownloader = UrlConnectionDownloader(internalFileProvider)
+    private val privateInternalFileProvider: FileProvider =
+        PrivateInternalFileProvider(context, FileCreationMode.entries[writeType])
+    private val urlConnectionDownloader = UrlConnectionDownloader(privateInternalFileProvider)
     private val fileData = FileDataModel(
         fileUrl = inputData.getString(KEY_FILE_URL) ?: "",
         fileName = inputData.getString(KEY_FILE_NAME) ?: "",
-        fileSuffix = inputData.getString(KEY_FILE_SUFFIX) ?: "",
+        fileExtension = inputData.getString(KEY_FILE_SUFFIX) ?: "",
         fileDirName = inputData.getString(KEY_FILE_DIRECTORY_NAME) ?: "",
         fileVersion = inputData.getString(KEY_FILE_VERSION_NAME),
-        fileMimeType = inputData.getString(KEY_FILE_MIME_TYPE),
-        isZip = inputData.getBoolean(KEY_FILE_IS_ZIP, false),
-        unzippedDirName = inputData.getString(KEY_FILE_UNZIPPED_DIRECTORY),
         totalBytes = inputData.getLong(KEY_FILE_TOTAL_BYTES, 0L),
         accessToken = inputData.getString(KEY_FILE_ACCESS_TOKEN)
     )
@@ -116,7 +111,7 @@ internal class InternalDownloadWorker(
         var failedMsg: String? = null
         var isWorkSuccess = false
 
-        urlConnectionDownloader.download(
+        urlConnectionDownloader.startDownload(
             fileData = fileData,
             listener = object : DownloadListener {
                 override suspend fun onStartDownload(file: File) {
@@ -153,11 +148,17 @@ internal class InternalDownloadWorker(
                 }
 
                 override suspend fun onDownloadCompleted(file: File) {
+                    if (runInService)
+                        setForeground(createSuccessForegroundInfo(filename = file.name))
+
                     downloadedFile = file
                     isWorkSuccess = true
                 }
 
-                override suspend fun onDownloadFailed(e: Exception) {
+                override suspend fun onDownloadFailed(file: File?, e: Exception) {
+                    if (runInService)
+                        setForeground(createFailedForegroundInfo(filename = file?.name ?: ""))
+
                     failedMsg = e.message
                 }
             }
@@ -165,7 +166,7 @@ internal class InternalDownloadWorker(
 
         return if (isWorkSuccess) {
             val successData = Data.Builder()
-                .putString(KEY_DOWNLOADED_FILE_PATH, downloadedFile?.name)
+                .putString(KEY_DOWNLOADED_FILE_PATH, downloadedFile?.absolutePath)
                 .build()
 
             Result.success(successData)
@@ -178,6 +179,7 @@ internal class InternalDownloadWorker(
         }
     }
 
+
     /**
      * Creates a [ForegroundInfo] with a progress notification for the download.
      *
@@ -187,15 +189,54 @@ internal class InternalDownloadWorker(
      */
     private fun createRunningForegroundInfo(progress: Int, filename: String): ForegroundInfo {
         var title = "Downloading $filename"
-        val content = "Downloading in progress: $progress%"
+        val content = "Downloading in progress: $progress%\n" +
+                ""
 
         val notification =
             NotificationCompat.Builder(applicationContext, FOREGROUND_NOTIFICATION_CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(content)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setOngoing(true)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setOngoing(false)
                 .setProgress(100, progress, false)
+                .build()
+
+        return ForegroundInfo(
+            notificationId,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
+    }
+
+    private fun createSuccessForegroundInfo(filename: String): ForegroundInfo {
+        var title = "Successful Download"
+        val content = "Download $filename successfully done."
+
+        val notification =
+            NotificationCompat.Builder(applicationContext, FOREGROUND_NOTIFICATION_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setOngoing(false)
+                .build()
+
+        return ForegroundInfo(
+            notificationId,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
+    }
+
+    private fun createFailedForegroundInfo(filename: String): ForegroundInfo {
+        var title = "Failed Download"
+        val content = "Download of $filename failed."
+
+        val notification =
+            NotificationCompat.Builder(applicationContext, FOREGROUND_NOTIFICATION_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setOngoing(false)
                 .build()
 
         return ForegroundInfo(

@@ -14,7 +14,7 @@ import java.io.File
  * @property context The Android [Context] used to access internal storage directories.
  * @property creationMode Determines the behavior when a file with the same name already exists.
  */
-internal class InternalFileProvider(
+internal class PrivateInternalFileProvider(
     private val context: Context,
     private val creationMode: FileCreationMode
 ) : FileProvider {
@@ -80,15 +80,17 @@ internal class InternalFileProvider(
      */
     private fun createFileInInternalStorage(
         context: Context,
-        directoryName: String,
+        directoryName: String?,
         version: String?,
         fileFullName: String
     ): File {
-        val directories = mutableListOf(directoryName)
+        val directories = mutableListOf<String>()
+
+        directoryName?.let { directories.add(it) }
         version?.let { directories.add(it) }
 
         val outputDir = File(
-            context.getExternalFilesDir(null),
+            context.filesDir,
             directories.joinToString(separator = File.separator)
         )
 
