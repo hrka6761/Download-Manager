@@ -158,7 +158,7 @@ internal class UrlConnectionDownloader(
             connection.setRequestProperty("Range", "bytes=$outputFileBytes-")
 
         connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
+        connection.readTimeout = 0
 
         return connection
     }
