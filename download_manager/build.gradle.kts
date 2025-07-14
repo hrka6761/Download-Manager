@@ -43,4 +43,7 @@ dependencies {
 
     // work
     implementation(libs.androidx.work.runtime.ktx)
+
+    // okhttp3
+    implementation(libs.okhttp)
 }
