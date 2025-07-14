@@ -193,7 +193,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                     Text(
                         modifier = modifier
                             .fillMaxWidth()
-                            .padding(start = 8.dp, top = 8.dp),
+                            .padding(start = 8.dp),
                         text = "Select creation mode.",
                         fontSize = 12.sp
                     )
@@ -218,7 +218,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(8.dp)
+                        .padding(vertical = 4.dp, horizontal = 8.dp)
                         .clickable {
                             runInService = !runInService
                         }
@@ -236,7 +236,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                 Button(
                     modifier = modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 24.dp),
+                        .padding(8.dp),
                     enabled = url.isNotEmpty() &&
                             fileName.isNotEmpty() &&
                             fileSize.isNotEmpty() &&
