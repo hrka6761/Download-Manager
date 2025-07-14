@@ -34,6 +34,7 @@ internal class PrivateInternalFileProvider(
      *
      * If a file with the same name exists:
      * - In [FileCreationMode.Overwrite], the existing file will be deleted.
+     * - In [FileCreationMode.Append], the existing file will be used as-is for appending.
      * - In [FileCreationMode.CreateNew], a new file will be created with a timestamp appended to its name.
      *
      * @param fileData The metadata describing the file.
@@ -51,6 +52,7 @@ internal class PrivateInternalFileProvider(
         if (outputFile.exists())
             when (creationMode) {
                 FileCreationMode.Overwrite -> outputFile.delete()
+                FileCreationMode.Append -> {}
                 FileCreationMode.CreateNew -> {
                     val newOutputFile =
                         File(

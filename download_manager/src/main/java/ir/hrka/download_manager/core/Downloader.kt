@@ -21,5 +21,8 @@ internal interface Downloader {
      */
     suspend fun startDownload(fileData: FileDataModel, listener: DownloadListener)
 
+    /**
+     * Stops an ongoing download operation.
+     */
     suspend fun stopDownload()
 }

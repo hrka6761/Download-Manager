@@ -9,7 +9,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import ir.hrka.download_manager.core.UrlConnectionDownloader
+import ir.hrka.download_manager.core.OkHttpDownloader
 import ir.hrka.download_manager.entities.FileDataModel
 import ir.hrka.download_manager.file.FileProvider
 import ir.hrka.download_manager.file.PrivateInternalFileProvider
@@ -33,19 +33,31 @@ import ir.hrka.download_manager.utilities.FileCreationMode
 import java.io.File
 
 /**
- * A [CoroutineWorker] that downloads a file in the background using [UrlConnectionDownloader]
- * and saves it internally using [PrivateInternalFileProvider].
+ * A [CoroutineWorker] responsible for downloading a file in the background using a coroutine.
  *
- * This worker supports running as a foreground service with a persistent notification
- * displaying download progress.
- *
- * The worker reads required parameters from the [inputData] bundle, including:
- * - URL, file name, suffix, directory name, version, mime type, zip flag, unzipped directory,
- *   total file size, and access token for the file.
- * - Flags to indicate if the worker should run in a foreground service and the file creation mode.
+ * This worker manages the download process via [OkHttpDownloader], handles progress reporting,
+ * and updates a foreground notification if configured to run in a service.
  *
  * @property context The application context.
- * @property params Worker parameters containing input data and runtime info.
+ * @property params The parameters used to configure this worker, including input data.
+ *
+ * The worker supports these input parameters via [WorkerParameters.inputData]:
+ * - [KEY_FILE_URL]: The URL of the file to download.
+ * - [KEY_FILE_NAME]: The name of the file to save.
+ * - [KEY_FILE_SUFFIX]: The file extension.
+ * - [KEY_FILE_DIRECTORY_NAME]: Optional directory name to store the file.
+ * - [KEY_FILE_VERSION_NAME]: Optional version string for the file.
+ * - [KEY_FILE_TOTAL_BYTES]: Total size of the file in bytes.
+ * - [KEY_FILE_ACCESS_TOKEN]: Optional access token for authorization.
+ * - [KEY_FILE_CREATION_MODE]: The mode of file creation (overwrite, append, create new).
+ * - [KEY_RUN_IN_SERVICE]: Whether to run the download with a foreground notification service.
+ *
+ * The worker posts download progress updates via [setProgress], and uses foreground notifications
+ * to display download status if [KEY_RUN_IN_SERVICE] is true.
+ *
+ * The result of the worker is:
+ * - [Result.success] with the downloaded file path on success.
+ * - [Result.failure] with an error message on failure.
  */
 internal class InternalDownloadWorker(
     private val context: Context,
@@ -61,7 +73,7 @@ internal class InternalDownloadWorker(
     private val writeType = inputData.getInt(KEY_FILE_CREATION_MODE, 0)
     private val privateInternalFileProvider: FileProvider =
         PrivateInternalFileProvider(context, FileCreationMode.entries[writeType])
-    private val urlConnectionDownloader = UrlConnectionDownloader(privateInternalFileProvider)
+    private val downloader = OkHttpDownloader(privateInternalFileProvider)
     private val fileData = FileDataModel(
         fileUrl = inputData.getString(KEY_FILE_URL) ?: "",
         fileName = inputData.getString(KEY_FILE_NAME) ?: "",
@@ -72,16 +84,12 @@ internal class InternalDownloadWorker(
         accessToken = inputData.getString(KEY_FILE_ACCESS_TOKEN)
     )
 
+
     /**
-     * Initializes the notification channel required for foreground service notifications.
+     * Initializes the notification channel if the worker is configured to run as a foreground service.
      *
-     * This block creates a notification channel with the ID [FOREGROUND_NOTIFICATION_CHANNEL_ID]
-     * named "Download manager" with low importance to be used for download notifications.
-     * The channel creation happens only once when the worker is set to run in a foreground service
-     * mode ([runInService] is true) and the channel has not yet been created ([channelCreated] is false).
-     *
-     * Notification channels are mandatory on Android 8.0 (API level 26) and above for notifications
-     * to appear properly.
+     * This setup is required to display notifications on Android 8.0 (API level 26) and above.
+     * The channel is created once and used for download progress and status notifications.
      */
     init {
         if (runInService && !channelCreated) {
@@ -97,21 +105,21 @@ internal class InternalDownloadWorker(
 
 
     /**
-     * Performs the download work asynchronously.
+     * Executes the download task in a coroutine worker context.
      *
-     * Uses [UrlConnectionDownloader] to download the file specified by [fileData].
-     * Reports progress via a [DownloadListener] and updates the foreground notification
-     * if running as a foreground service.
+     * This method starts the file download using the [downloader] with the provided [fileData].
+     * It listens for download events to update progress, handle completion, and failures.
+     * If configured to run in a foreground service, it updates the notification accordingly.
      *
-     * @return [Result.success] with the downloaded file path on success,
-     * or [Result.failure] with an error message on failure.
+     * @return [Result.success] with output data containing the downloaded file path if the download succeeds,
+     * or [Result.failure] with an error message if it fails.
      */
     override suspend fun doWork(): Result {
         var downloadedFile: File? = null
         var failedMsg: String? = null
         var isWorkSuccess = false
 
-        urlConnectionDownloader.startDownload(
+        downloader.startDownload(
             fileData = fileData,
             listener = object : DownloadListener {
                 override suspend fun onStartDownload(file: File) {
@@ -179,13 +187,14 @@ internal class InternalDownloadWorker(
         }
     }
 
-
     /**
-     * Creates a [ForegroundInfo] with a progress notification for the download.
+     * Creates a [ForegroundInfo] representing the ongoing download notification.
      *
-     * @param progress Download progress as a percentage (0-100).
-     * @param filename Name of the file being downloaded.
-     * @return A [ForegroundInfo] object to update the foreground notification.
+     * Displays the download progress with the current filename and percentage completed.
+     *
+     * @param progress The current progress percentage (0-100).
+     * @param filename The name of the file being downloaded.
+     * @return A [ForegroundInfo] with the notification configured for an active download.
      */
     private fun createRunningForegroundInfo(progress: Int, filename: String): ForegroundInfo {
         var title = "Downloading $filename"
@@ -208,6 +217,14 @@ internal class InternalDownloadWorker(
         )
     }
 
+    /**
+     * Creates a [ForegroundInfo] representing the successful completion notification.
+     *
+     * Indicates that the download of the specified file has completed successfully.
+     *
+     * @param filename The name of the file downloaded.
+     * @return A [ForegroundInfo] with the notification configured for a successful download.
+     */
     private fun createSuccessForegroundInfo(filename: String): ForegroundInfo {
         var title = "Successful Download"
         val content = "Download $filename successfully done."
@@ -227,6 +244,14 @@ internal class InternalDownloadWorker(
         )
     }
 
+    /**
+     * Creates a [ForegroundInfo] representing the failed download notification.
+     *
+     * Indicates that the download of the specified file has failed.
+     *
+     * @param filename The name of the file whose download failed.
+     * @return A [ForegroundInfo] with the notification configured for a failed download.
+     */
     private fun createFailedForegroundInfo(filename: String): ForegroundInfo {
         var title = "Failed Download"
         val content = "Download of $filename failed."

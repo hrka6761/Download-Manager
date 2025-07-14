@@ -11,8 +11,14 @@ enum class FileCreationMode {
     Overwrite,
 
     /**
+     * Use the existing file and append data to it without deleting.
+     */
+    Append,
+
+    /**
      * Create a new file with a unique name, typically by appending a timestamp or other identifier,
      * to avoid overwriting the existing file.
      */
     CreateNew
 }
+

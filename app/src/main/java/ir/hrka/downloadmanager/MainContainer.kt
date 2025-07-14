@@ -51,10 +51,10 @@ fun AppContent(modifier: Modifier = Modifier) {
         Scaffold(
             modifier = modifier.fillMaxSize()
         ) { innerPaddings ->
-            var url by remember { mutableStateOf("https://cafebazaar.ir/download/bazaar.apk") }
-            var fileName by remember { mutableStateOf("bazaar") }
-            var fileSize by remember { mutableStateOf("22216704") }
-            var fileSuffix by remember { mutableStateOf("apk") }
+            var url by remember { mutableStateOf("https://srp-ai-assistant.ir/ai_models/gemma-3n-E4B-it-int4.task") }
+            var fileName by remember { mutableStateOf("gemma-3n-E4B-it-int4") }
+            var fileSize by remember { mutableStateOf("4405655031") }
+            var fileSuffix by remember { mutableStateOf("task") }
             var directoryName by remember { mutableStateOf("models") }
             var version by remember { mutableStateOf("1.0.0") }
             var selectedLocation by remember {

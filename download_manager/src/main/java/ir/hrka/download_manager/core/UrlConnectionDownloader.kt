@@ -13,13 +13,34 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * A concrete implementation of the [Downloader] interface that downloads files using [HttpURLConnection].
+ * @deprecated UrlConnectionDownloader is deprecated in favor of {@link OkHttpDownloader},
+ * which provides better performance, improved error handling, and support for resuming downloads.
  *
- * This class supports resuming interrupted downloads by using HTTP Range requests. It also
- * provides real-time progress updates including download rate and estimated time remaining.
+ * <p>
+ * Implementation of the {@link Downloader} interface using {@link HttpURLConnection}.
+ * This class supports partial download resumption via HTTP range headers and reports
+ * download progress periodically.
+ * </p>
  *
- * @property fileProvider Provides the output [File] where the downloaded content should be saved.
+ * <p>
+ * The download runs on a background thread (via {@link kotlinx.coroutines.Dispatchers.IO}),
+ * reads data from the input stream, writes it to the file system using {@link FileOutputStream},
+ * and notifies a {@link DownloadListener} of progress, completion, or failure.
+ * </p>
+ *
+ * @constructor Constructs a new instance of UrlConnectionDownloader with a file provider.
+ * @param fileProvider Provides the destination {@link File} based on the {@link FileDataModel}.
+ *
+ * @see Downloader
+ * @see OkHttpDownloader
+ * @see FileDataModel
+ * @see DownloadListener
  */
+@Deprecated(
+    message = "UrlConnectionDownloader is deprecated. Use OkHttpDownloader for better performance and resume support.",
+    replaceWith = ReplaceWith("OkHttpDownloader(fileProvider)"),
+    level = DeprecationLevel.WARNING
+)
 internal class UrlConnectionDownloader(
     private val fileProvider: FileProvider
 ) : Downloader {
@@ -29,12 +50,17 @@ internal class UrlConnectionDownloader(
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
 
+
     /**
-     * Starts downloading a file using [HttpURLConnection]. Supports progress reporting and
-     * resuming downloads if a partial file already exists.
+     * Starts downloading the file described by {@link FileDataModel}.
+     * <p>
+     * The method supports resuming interrupted downloads if the server supports
+     * byte-range requests and updates the {@link DownloadListener} with download rate
+     * and estimated time remaining at 200ms intervals.
+     * </p>
      *
-     * @param fileData Metadata for the file to download including URL, token, and total size.
-     * @param listener Callback listener for download status updates such as start, progress, success, and failure.
+     * @param fileData Metadata about the file to download, including URL and access token.
+     * @param listener Callback for reporting download progress, completion, or failure.
      */
     override suspend fun startDownload(
         fileData: FileDataModel,
@@ -125,6 +151,13 @@ internal class UrlConnectionDownloader(
         }
     }
 
+    /**
+     * Stops the ongoing download operation.
+     * <p>
+     * Closes any open streams and disconnects the HTTP connection.
+     * Should be called to release resources during cancellation or completion.
+     * </p>
+     */
     override suspend fun stopDownload() {
         outputStream?.close()
         inputStream?.close()
@@ -132,15 +165,16 @@ internal class UrlConnectionDownloader(
     }
 
     /**
-     * Creates and configures a [HttpURLConnection] for the provided file URL.
+     * Creates and configures a {@link HttpURLConnection} for the given file URL.
+     * <p>
+     * Adds an "Authorization" header if an access token is provided and includes
+     * a "Range" header for resuming downloads based on the output file's current size.
+     * </p>
      *
-     * If an access token is provided, it is set as a Bearer token in the Authorization header.
-     * If a partial file already exists, a `Range` header is added to resume the download.
-     *
-     * @param fileUrl The URL of the file to be downloaded.
-     * @param accessToken Optional bearer token used for authorization.
-     * @param outputFile The file where data is being downloaded.
-     * @return A configured [HttpURLConnection] instance ready to connect.
+     * @param fileUrl     The URL of the file to download.
+     * @param accessToken Optional access token for authenticated requests.
+     * @param outputFile  The file to write the download data to.
+     * @return A configured {@link HttpURLConnection} instance.
      */
     private fun provideConnection(
         fileUrl: String,
@@ -164,12 +198,13 @@ internal class UrlConnectionDownloader(
     }
 
     /**
-     * Parses the `Content-Range` header of the response to extract the starting byte position.
+     * Parses the "Content-Range" response header to determine the starting byte offset.
+     * <p>
+     * Used for resuming downloads from the correct position.
+     * </p>
      *
-     * This is useful for resuming partially downloaded files.
-     *
-     * @param connection The [HttpURLConnection] with a response containing the Content-Range header.
-     * @return The starting byte position from the server response.
+     * @param connection The active {@link HttpURLConnection}.
+     * @return The byte offset from which to resume the download.
      */
     private fun getStartByte(connection: HttpURLConnection): Long {
         val contentRange = connection.getHeaderField("Content-Range")
