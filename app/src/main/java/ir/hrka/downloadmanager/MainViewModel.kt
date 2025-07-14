@@ -1,8 +1,12 @@
 package ir.hrka.downloadmanager
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import ir.hrka.download_manager.DownloadManager
 import ir.hrka.download_manager.entities.FileDataModel
@@ -98,5 +102,15 @@ class MainViewModel : ViewModel() {
         )
 
         Toast.makeText(context, file.absolutePath, Toast.LENGTH_LONG).show()
+    }
+
+    fun hasNotificationPermission(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        else
+            true
     }
 }

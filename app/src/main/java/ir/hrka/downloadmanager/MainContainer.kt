@@ -1,6 +1,11 @@
 package ir.hrka.downloadmanager
 
+import android.Manifest
+import android.os.Build
 import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,6 +47,7 @@ import ir.hrka.download_manager.utilities.FileCreationMode
 import ir.hrka.download_manager.utilities.FileLocation
 import ir.hrka.downloadmanager.ui.theme.DownloadManagerTheme
 
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
 @Composable
 fun AppContent(modifier: Modifier = Modifier) {
     val activity = LocalActivity.current as MainActivity
@@ -66,6 +72,26 @@ fun AppContent(modifier: Modifier = Modifier) {
             var runInService by remember { mutableStateOf(false) }
             val downloadStatus by mainViewModel.downloadStatus.collectAsState()
             val downloadProgress by mainViewModel.downloadProgress.collectAsState()
+            val permissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { isGranted ->
+                if (isGranted)
+                    mainViewModel.startDownload(
+                        activity = activity,
+                        fileDataModel = FileDataModel(
+                            fileUrl = url,
+                            fileName = fileName,
+                            fileExtension = fileSuffix,
+                            fileDirName = directoryName,
+                            fileVersion = version,
+                            totalBytes = fileSize.toLong(),
+                            accessToken = null,
+                        ),
+                        fileLocation = selectedLocation,
+                        creationMode = selectedCreationMode,
+                        runInService = runInService
+                    )
+            }
 
             Column(
                 modifier = modifier
@@ -218,21 +244,24 @@ fun AppContent(modifier: Modifier = Modifier) {
                             directoryName.isNotEmpty() &&
                             version.isNotEmpty(),
                     onClick = {
-                        mainViewModel.startDownload(
-                            activity = activity,
-                            fileDataModel = FileDataModel(
-                                fileUrl = url,
-                                fileName = fileName,
-                                fileExtension = fileSuffix,
-                                fileDirName = directoryName,
-                                fileVersion = version,
-                                totalBytes = fileSize.toLong(),
-                                accessToken = null,
-                            ),
-                            fileLocation = selectedLocation,
-                            creationMode = selectedCreationMode,
-                            runInService = runInService
-                        )
+                        if (mainViewModel.hasNotificationPermission(activity))
+                            mainViewModel.startDownload(
+                                activity = activity,
+                                fileDataModel = FileDataModel(
+                                    fileUrl = url,
+                                    fileName = fileName,
+                                    fileExtension = fileSuffix,
+                                    fileDirName = directoryName,
+                                    fileVersion = version,
+                                    totalBytes = fileSize.toLong(),
+                                    accessToken = null,
+                                ),
+                                fileLocation = selectedLocation,
+                                creationMode = selectedCreationMode,
+                                runInService = runInService
+                            )
+                        else
+                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
                 ) {
                     Text("Start Download")
@@ -310,6 +339,7 @@ fun AppContent(modifier: Modifier = Modifier) {
                                     is DownloadStatus.None -> {
                                         ""
                                     }
+
                                     is DownloadStatus.StartDownload -> {
                                         "Start Download"
                                     }
