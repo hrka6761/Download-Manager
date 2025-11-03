@@ -26,7 +26,6 @@ import java.io.File
  * @see DownloadProgress
  * @see DownloadSpeed
  * @see DownloadError
- * @author Download Manager Team
  */
 class DownloadStateTest {
 

@@ -39,7 +39,6 @@ import java.io.File
  * @see OkHttpDownloader
  * @see Downloader
  * @see MockWebServer
- * @author Download Manager Team
  */
 class OkHttpDownloaderTest {
 

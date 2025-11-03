@@ -31,7 +31,6 @@ import org.junit.rules.TemporaryFolder
  * @see ServerInfo
  * @see DownloadValidation
  * @see ValidationCheck
- * @author Download Manager Team
  */
 class DownloadInfoTest {
 
