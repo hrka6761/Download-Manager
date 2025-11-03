@@ -4,6 +4,7 @@ import ir.hrka.download_manager.core.utilities.DownloadRequest
 import ir.hrka.download_manager.core.utilities.DownloadState
 import ir.hrka.download_manager.core.utilities.ValidationCheckType
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -14,6 +15,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Comprehensive integration and unit test suite for [OkHttpDownloader].
@@ -860,7 +862,7 @@ class OkHttpDownloaderTest {
 
         // Assert
         val downloadingStates = states.filterIsInstance<DownloadState.Downloading>()
-        assertTrue("Should have multiple progress updates", downloadingStates.size > 0)
+        assertTrue("Should have multiple progress updates", downloadingStates.isNotEmpty())
 
         // Verify progress increases
         if (downloadingStates.size > 1) {
@@ -1042,7 +1044,7 @@ class OkHttpDownloaderTest {
             .build()
 
         // Act - Start first download (doesn't complete immediately due to throttle)
-        val job1 = kotlinx.coroutines.launch {
+        val job1 = launch {
             downloader.download(request1).collect { }
         }
         
@@ -1158,7 +1160,7 @@ class OkHttpDownloaderTest {
                 destination
             ).setId("download-$index").build()
             
-            val job = kotlinx.coroutines.launch {
+            val job = launch {
                 val states = downloader.download(request).toList()
                 synchronized(results) {
                     results.add(states)
@@ -1248,7 +1250,7 @@ class OkHttpDownloaderTest {
         ).build()
 
         // Act - Start download
-        val job = kotlinx.coroutines.launch {
+        val job = launch {
             try {
                 downloader.download(request).collect { }
             } catch (e: CancellationException) {
@@ -1446,7 +1448,7 @@ class OkHttpDownloaderTest {
             
             downloadIds.add(request.id)
             
-            val job = kotlinx.coroutines.launch {
+            val job = launch {
                 try {
                     downloader.download(request).collect { }
                 } catch (e: CancellationException) {
