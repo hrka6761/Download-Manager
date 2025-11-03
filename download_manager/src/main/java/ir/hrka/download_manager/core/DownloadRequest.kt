@@ -47,14 +47,70 @@ data class DownloadRequest(
 ) {
 
     init {
+        // URL validation
         require(url.isNotBlank()) { "URL cannot be blank" }
-        require(url.startsWith("http://") || url.startsWith("https://")) {
-            "URL must be HTTP or HTTPS"
+        require(url.trim() == url) { "URL cannot have leading or trailing whitespace" }
+        
+        // Protocol validation - support multiple protocols
+        require(DownloadProtocol.isSupported(url)) {
+            "URL protocol not supported. Supported protocols: ${DownloadProtocol.getSupportedProtocolsString()}"
         }
+        
+        // Validate URL format (for http/https/ftp protocols)
+        val protocol = DownloadProtocol.fromUrl(url)
+        if (protocol in listOf(DownloadProtocol.HTTP, DownloadProtocol.HTTPS, DownloadProtocol.FTP, DownloadProtocol.FTPS)) {
+            try {
+                java.net.URL(url)
+            } catch (e: java.net.MalformedURLException) {
+                throw IllegalArgumentException("URL is malformed: ${e.message}", e)
+            }
+        }
+        
+        // ID validation
+        require(id.isNotBlank()) { "ID cannot be blank" }
+        
+        // Timeout validation
         require(connectTimeout > 0) { "Connect timeout must be positive" }
         require(readTimeout > 0) { "Read timeout must be positive" }
+        require(connectTimeout <= 300_000) { "Connect timeout cannot exceed 5 minutes (300000ms)" }
+        require(readTimeout <= 3_600_000) { "Read timeout cannot exceed 1 hour (3600000ms)" }
+        
+        // Retry validation
         require(maxRetries >= 0) { "Max retries cannot be negative" }
+        require(maxRetries <= 100) { "Max retries cannot exceed 100" }
         require(retryDelay >= 0) { "Retry delay cannot be negative" }
+        require(retryDelay <= 600_000) { "Retry delay cannot exceed 10 minutes (600000ms)" }
+        
+        // Size validation
+        require(expectedSize >= -1) { "Expected size must be -1 (unknown) or non-negative" }
+        
+        // Checksum validation
+        if (checksum != null || checksumAlgorithm != null) {
+            require(checksum != null && checksumAlgorithm != null) {
+                "Both checksum and checksumAlgorithm must be provided together"
+            }
+            require(checksum.isNotBlank()) { "Checksum cannot be blank" }
+            require(checksumAlgorithm.isNotBlank()) { "Checksum algorithm cannot be blank" }
+        }
+    }
+    
+    /**
+     * Gets the protocol of this download request.
+     *
+     * @return The [DownloadProtocol] for this request
+     */
+    fun getProtocol(): DownloadProtocol {
+        return DownloadProtocol.fromUrl(url) 
+            ?: throw IllegalStateException("Protocol should have been validated in init block")
+    }
+    
+    /**
+     * Checks if this request supports resume functionality.
+     *
+     * @return true if the protocol supports resuming downloads
+     */
+    fun supportsResume(): Boolean {
+        return getProtocol().supportsResume && resumeIfPossible
     }
 
     /**
