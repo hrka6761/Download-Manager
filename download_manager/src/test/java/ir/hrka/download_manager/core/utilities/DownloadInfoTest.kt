@@ -1,4 +1,4 @@
-package ir.hrka.download_manager.core
+package ir.hrka.download_manager.core.utilities
 
 import org.junit.Assert.*
 import org.junit.Rule
@@ -655,7 +655,11 @@ class DownloadInfoTest {
         )
         val secondTransition = StateTransition(
             from = DownloadState.Connecting("test", "url"),
-            to = DownloadState.Downloading("test", DownloadProgress(0, 1000), DownloadSpeed(0, 0, 0)),
+            to = DownloadState.Downloading(
+                "test",
+                DownloadProgress(0, 1000),
+                DownloadSpeed(0, 0, 0)
+            ),
             timestamp = 6000
         )
 

@@ -1,10 +1,9 @@
-package ir.hrka.download_manager.core
+package ir.hrka.download_manager.core.utilities
 
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.File
 
 /**
  * Comprehensive test suite for [DownloadState] and all related data classes.
@@ -842,7 +841,7 @@ class DownloadStateTest {
      */
     @Test
     fun `FileSystemErrorType enum has all values`() {
-        val types = FileSystemErrorType.values()
+        val types = FileSystemErrorType.entries
 
         assertEquals(7, types.size)
         assertTrue(types.contains(FileSystemErrorType.DISK_FULL))
@@ -869,7 +868,7 @@ class DownloadStateTest {
      */
     @Test
     fun `TimeoutType enum has all values`() {
-        val types = TimeoutType.values()
+        val types = TimeoutType.entries
 
         assertEquals(3, types.size)
         assertTrue(types.contains(TimeoutType.CONNECT_TIMEOUT))

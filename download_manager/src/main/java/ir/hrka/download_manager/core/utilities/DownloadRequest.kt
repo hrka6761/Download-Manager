@@ -1,6 +1,8 @@
-package ir.hrka.download_manager.core
+package ir.hrka.download_manager.core.utilities
 
 import java.io.File
+import java.net.MalformedURLException
+import java.net.URL
 
 /**
  * Immutable request object for initiating a download operation.
@@ -60,8 +62,8 @@ data class DownloadRequest(
         val protocol = DownloadProtocol.fromUrl(url)
         if (protocol in listOf(DownloadProtocol.HTTP, DownloadProtocol.HTTPS, DownloadProtocol.FTP, DownloadProtocol.FTPS)) {
             try {
-                java.net.URL(url)
-            } catch (e: java.net.MalformedURLException) {
+                URL(url)
+            } catch (e: MalformedURLException) {
                 throw IllegalArgumentException("URL is malformed: ${e.message}", e)
             }
         }

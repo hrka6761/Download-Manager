@@ -1,5 +1,8 @@
 package ir.hrka.download_manager.core
 
+import ir.hrka.download_manager.core.utilities.DownloadRequest
+import ir.hrka.download_manager.core.utilities.DownloadState
+import ir.hrka.download_manager.core.utilities.ValidationCheckType
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse

@@ -1,5 +1,20 @@
 package ir.hrka.download_manager.core
 
+import ir.hrka.download_manager.core.utilities.DownloadError
+import ir.hrka.download_manager.core.utilities.DownloadInfo
+import ir.hrka.download_manager.core.utilities.DownloadMetadata
+import ir.hrka.download_manager.core.utilities.DownloadProgress
+import ir.hrka.download_manager.core.utilities.DownloadProgressInfo
+import ir.hrka.download_manager.core.utilities.DownloadRequest
+import ir.hrka.download_manager.core.utilities.DownloadSpeed
+import ir.hrka.download_manager.core.utilities.DownloadState
+import ir.hrka.download_manager.core.utilities.DownloadTiming
+import ir.hrka.download_manager.core.utilities.DownloadValidation
+import ir.hrka.download_manager.core.utilities.ServerInfo
+import ir.hrka.download_manager.core.utilities.StateTransition
+import ir.hrka.download_manager.core.utilities.ValidationCheck
+import ir.hrka.download_manager.core.utilities.ValidationCheckType
+import ir.hrka.download_manager.core.utilities.ValidationSeverity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -271,17 +286,13 @@ class OkHttpDownloader(
                     val downloadDuration = System.currentTimeMillis() - startTime
                     val averageSpeed = if (downloadDuration > 0) {
                         (downloadedBytes * 1000) / downloadDuration
-                    } else {
-                        0L
-                    }
+                    } else 0L
 
                     // Verify if checksum provided
                     val verified =
                         if (request.checksum != null && request.checksumAlgorithm != null) {
                             verifyChecksum(destination, request.checksum, request.checksumAlgorithm)
-                        } else {
-                            false
-                        }
+                } else false
 
                     val completedState = DownloadState.Completed(
                         downloadId = downloadId,

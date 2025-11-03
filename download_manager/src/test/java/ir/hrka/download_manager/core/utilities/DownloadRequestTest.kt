@@ -1,4 +1,4 @@
-package ir.hrka.download_manager.core
+package ir.hrka.download_manager.core.utilities
 
 import org.junit.Assert.*
 import org.junit.Rule
@@ -1180,7 +1180,7 @@ class DownloadRequestTest {
      */
     @Test
     fun `priority enum has 4 values in correct order`() {
-        val priorities = DownloadPriority.values()
+        val priorities = DownloadPriority.entries
 
         assertEquals(4, priorities.size)
         assertEquals(DownloadPriority.LOW, priorities[0])
@@ -1348,11 +1348,11 @@ class DownloadRequestTest {
         // HTTPS servers (CDNs, APIs)
         val https = DownloadRequest.Builder("https://cdn.example.com/files/app.apk", destination).build()
         val api = DownloadRequest.Builder("https://api.github.com/repos/user/repo/releases/download/v1.0/file.zip", destination).build()
-        
+
         // FTP servers
         val ftp = DownloadRequest.Builder("ftp://ftp.example.com/pub/software/file.tar.gz", destination).build()
         val ftpAnon = DownloadRequest.Builder("ftp://anonymous@ftp.server.com/files/data.zip", destination).build()
-        
+
         // FTPS servers (secure FTP)
         val ftps = DownloadRequest.Builder("ftps://secure.ftp.com:990/files/encrypted.bin", destination).build()
         
@@ -1362,13 +1362,13 @@ class DownloadRequestTest {
         // SMB/CIFS servers (Windows file sharing)
         val smb = DownloadRequest.Builder("smb://fileserver.local/share/documents/report.pdf", destination).build()
         val smbAuth = DownloadRequest.Builder("smb://user:pass@192.168.1.5/shared/file.zip", destination).build()
-        
+
         // WebDAV servers
         val webdav = DownloadRequest.Builder("webdav://webdav.example.com/files/document.docx", destination).build()
         
         // Internal network
         val internal = DownloadRequest.Builder("http://192.168.1.100:8080/files/download", destination).build()
-        
+
         // Localhost development
         val localhost = DownloadRequest.Builder("http://localhost:3000/test-file.bin", destination).build()
         

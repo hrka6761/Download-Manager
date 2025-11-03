@@ -1,4 +1,4 @@
-package ir.hrka.download_manager.core
+package ir.hrka.download_manager.core.utilities
 
 import java.io.File
 

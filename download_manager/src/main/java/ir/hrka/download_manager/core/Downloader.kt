@@ -1,5 +1,9 @@
 package ir.hrka.download_manager.core
 
+import ir.hrka.download_manager.core.utilities.DownloadInfo
+import ir.hrka.download_manager.core.utilities.DownloadRequest
+import ir.hrka.download_manager.core.utilities.DownloadState
+import ir.hrka.download_manager.core.utilities.DownloadValidation
 import kotlinx.coroutines.flow.Flow
 
 /**
