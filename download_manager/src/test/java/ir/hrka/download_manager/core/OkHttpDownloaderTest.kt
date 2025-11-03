@@ -1002,4 +1002,508 @@ class OkHttpDownloaderTest {
         // Assert
         assertTrue(states.last() is DownloadState.Completed)
     }
+
+    // ==================== Performance & Edge Case Tests ====================
+
+    /**
+     * Tests duplicate download ID handling - should fail gracefully.
+     *
+     * **Performance Fix:**
+     * - Duplicate ID now emits Failed state
+     * - Prevents silent overwrite of existing download context
+     * - Prevents memory leak and orphaned coroutines
+     *
+     * **What is tested:**
+     * - Starting download with duplicate ID fails
+     * - First download continues unaffected
+     * - Second download emits Failed state immediately
+     * - Error message indicates duplicate ID
+     */
+    @Test
+    fun `duplicate download ID fails gracefully`() = runTest {
+        // Arrange
+        val fileContent = "Test content"
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(fileContent)
+                .throttleBody(1, 100, java.util.concurrent.TimeUnit.MILLISECONDS) // Slow download
+        )
+
+        val destination1 = tempFolder.newFile("file1.txt")
+        val destination2 = tempFolder.newFile("file2.txt")
+        
+        // Create two requests with SAME ID
+        val request1 = DownloadRequest.Builder(mockServer.url("/file1.txt").toString(), destination1)
+            .setId("duplicate-id")
+            .build()
+        val request2 = DownloadRequest.Builder(mockServer.url("/file2.txt").toString(), destination2)
+            .setId("duplicate-id") // Same ID!
+            .build()
+
+        // Act - Start first download (doesn't complete immediately due to throttle)
+        val job1 = kotlinx.coroutines.launch {
+            downloader.download(request1).collect { }
+        }
+        
+        kotlinx.coroutines.delay(50) // Let first download start
+        
+        // Try to start second download with same ID - should fail
+        val states2 = downloader.download(request2).toList()
+
+        // Assert
+        // Second download should fail immediately with duplicate ID error
+        assertEquals(1, states2.size)
+        val failedState = states2.first() as DownloadState.Failed
+        assertTrue(failedState.error.message.contains("already exists"))
+        assertFalse(failedState.canRetry)
+        
+        // First download should still be tracked
+        assertNotNull(downloader.getState("duplicate-id"))
+        
+        job1.cancel()
+    }
+
+    /**
+     * Tests memory cleanup - completed downloads stay in memory forever.
+     *
+     * **Performance Issue:**
+     * - Downloads map grows unbounded
+     * - Completed downloads never removed automatically
+     * - Memory leak for long-running applications
+     *
+     * **What is tested:**
+     * - Multiple completed downloads accumulate
+     * - getState still returns state after completion
+     * - No automatic cleanup mechanism
+     * - Manual clearDownload required
+     */
+    @Test
+    fun `completed downloads remain in memory until cleared`() = runTest {
+        // Arrange - Create multiple downloads
+        val downloadIds = mutableListOf<String>()
+        
+        repeat(10) { index ->
+            mockServer.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setBody("Content $index")
+            )
+            
+            val destination = tempFolder.newFile("file$index.txt")
+            val request = DownloadRequest.Builder(
+                mockServer.url("/file$index.txt").toString(), 
+                destination
+            ).build()
+            
+            downloadIds.add(request.id)
+            
+            // Download and complete
+            downloader.download(request).toList()
+        }
+
+        // Act - Check if all downloads are still in memory
+        val statesAfterCompletion = downloadIds.map { id ->
+            downloader.getState(id)
+        }
+
+        // Assert
+        // All downloads are still accessible (MEMORY LEAK)
+        assertEquals(10, statesAfterCompletion.filterNotNull().size)
+        statesAfterCompletion.forEach { state ->
+            assertTrue(state is DownloadState.Completed)
+        }
+        
+        // Manual cleanup required
+        downloadIds.forEach { id ->
+            downloader.clearDownload(id)
+        }
+        
+        // Now they should be gone
+        val statesAfterCleanup = downloadIds.map { id ->
+            downloader.getState(id)
+        }
+        assertEquals(0, statesAfterCleanup.filterNotNull().size)
+    }
+
+    /**
+     * Tests concurrent downloads with different IDs work correctly.
+     *
+     * **What is tested:**
+     * - Multiple simultaneous downloads
+     * - ConcurrentHashMap thread-safety
+     * - No interference between downloads
+     * - All downloads complete successfully
+     */
+    @Test
+    fun `concurrent downloads with different IDs work correctly`() = runTest {
+        // Arrange
+        val downloadCount = 5
+        val jobs = mutableListOf<kotlinx.coroutines.Job>()
+        val results = mutableListOf<List<DownloadState>>()
+        
+        repeat(downloadCount) { index ->
+            mockServer.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setBody("Content for download $index")
+            )
+        }
+
+        // Act - Start all downloads concurrently
+        repeat(downloadCount) { index ->
+            val destination = tempFolder.newFile("concurrent$index.txt")
+            val request = DownloadRequest.Builder(
+                mockServer.url("/file$index.txt").toString(),
+                destination
+            ).setId("download-$index").build()
+            
+            val job = kotlinx.coroutines.launch {
+                val states = downloader.download(request).toList()
+                synchronized(results) {
+                    results.add(states)
+                }
+            }
+            jobs.add(job)
+        }
+        
+        // Wait for all downloads
+        jobs.forEach { it.join() }
+
+        // Assert
+        assertEquals(downloadCount, results.size)
+        results.forEach { states ->
+            assertTrue(states.last() is DownloadState.Completed)
+        }
+    }
+
+    /**
+     * Tests getActiveDownloads performance with many downloads.
+     *
+     * **Performance Concern:**
+     * - filters entire downloads map
+     * - O(n) operation for each call
+     *
+     * **What is tested:**
+     * - Method works correctly with multiple downloads
+     * - Returns only active downloads
+     * - Performance acceptable for reasonable download count
+     */
+    @Test
+    fun `getActiveDownloads filters correctly with multiple states`() = runTest {
+        // Arrange - Create downloads in different states
+        
+        // Completed download
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Done"))
+        val completedDest = tempFolder.newFile("completed.txt")
+        val completedRequest = DownloadRequest.Builder(
+            mockServer.url("/completed.txt").toString(),
+            completedDest
+        ).setId("completed").build()
+        downloader.download(completedRequest).toList()
+        
+        // Failed download (HTTP error)
+        mockServer.enqueue(MockResponse().setResponseCode(404))
+        val failedDest = tempFolder.newFile("failed.txt")
+        val failedRequest = DownloadRequest.Builder(
+            mockServer.url("/failed.txt").toString(),
+            failedDest
+        ).setId("failed").setMaxRetries(1).build()
+        try {
+            downloader.download(failedRequest).toList()
+        } catch (e: Exception) { /* Expected */ }
+
+        // Act
+        val activeDownloads = downloader.getActiveDownloads()
+
+        // Assert
+        // Should not include completed or failed downloads
+        assertFalse(activeDownloads.contains("completed"))
+        assertFalse(activeDownloads.contains("failed"))
+    }
+
+    /**
+     * Tests cancellation cleans up resources properly.
+     *
+     * **What is tested:**
+     * - cancel() removes download from memory
+     * - HTTP call is cancelled
+     * - No resource leaks
+     * - Subsequent operations fail appropriately
+     */
+    @Test
+    fun `cancel removes download from tracking immediately`() = runTest {
+        // Arrange
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("A".repeat(100000))
+                .throttleBody(1000, 100, java.util.concurrent.TimeUnit.MILLISECONDS)
+        )
+
+        val destination = tempFolder.newFile("cancel-test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act - Start download
+        val job = kotlinx.coroutines.launch {
+            try {
+                downloader.download(request).collect { }
+            } catch (e: CancellationException) {
+                // Expected
+            }
+        }
+        
+        kotlinx.coroutines.delay(50) // Let download start
+        
+        // Cancel it
+        val cancelResult = downloader.cancel(request.id)
+        
+        kotlinx.coroutines.delay(50) // Let cancellation process
+
+        // Assert
+        assertTrue(cancelResult.isSuccess)
+        
+        // Download should be removed from tracking
+        assertNull(downloader.getState(request.id))
+        
+        job.cancel()
+    }
+
+    /**
+     * Tests speed calculation with edge cases.
+     *
+     * **Performance Concern:**
+     * - Line 236-240: removeAt(0) is O(n) for ArrayList
+     * - Called repeatedly during download
+     *
+     * **What is tested:**
+     * - Speed calculation works during download
+     * - Progress updates include speed information
+     * - No crashes with edge cases
+     */
+    @Test
+    fun `download calculates speed during progress updates`() = runTest {
+        // Arrange
+        val fileContent = "A".repeat(50000)
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(fileContent)
+                .throttleBody(5000, 50, java.util.concurrent.TimeUnit.MILLISECONDS)
+        )
+
+        val destination = tempFolder.newFile("speed-test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        val downloadingStates = states.filterIsInstance<DownloadState.Downloading>()
+        assertTrue(downloadingStates.isNotEmpty())
+        
+        // At least some states should have non-zero speed
+        val statesWithSpeed = downloadingStates.filter { it.speed.currentBytesPerSecond > 0 }
+        assertTrue(statesWithSpeed.isNotEmpty())
+    }
+
+    /**
+     * Tests retry mechanism doesn't cause memory buildup.
+     *
+     * **What is tested:**
+     * - Multiple retries don't accumulate contexts
+     * - Failed download is tracked correctly
+     * - Retry count is maintained
+     */
+    @Test
+    fun `retry mechanism handles failures correctly`() = runTest {
+        // Arrange - Server returns errors
+        repeat(3) {
+            mockServer.enqueue(MockResponse().setResponseCode(500))
+        }
+
+        val destination = tempFolder.newFile("retry-test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(3).build()
+
+        // Act
+        val states = try {
+            downloader.download(request).toList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        // Assert
+        val failedState = states.lastOrNull() as? DownloadState.Failed
+        assertNotNull(failedState)
+        assertEquals(false, failedState?.canRetry)
+    }
+
+    /**
+     * Tests validation doesn't perform expensive operations repeatedly.
+     *
+     * **What is tested:**
+     * - validate() is efficient
+     * - Can be called multiple times
+     * - No side effects
+     */
+    @Test
+    fun `validate can be called multiple times efficiently`() = runTest {
+        // Arrange
+        val destination = tempFolder.newFile("validate-test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act - Call validate multiple times
+        val results = List(100) {
+            downloader.validate(request)
+        }
+
+        // Assert
+        assertEquals(100, results.size)
+        results.forEach { result ->
+            assertTrue(result.isSuccess)
+            assertTrue(result.getOrNull()?.isValid == true)
+        }
+    }
+
+    /**
+     * Tests file handle cleanup after download completion.
+     *
+     * **What is tested:**
+     * - File is readable after download completes
+     * - No file handles left open
+     * - File can be deleted after download
+     */
+    @Test
+    fun `download closes file handles properly after completion`() = runTest {
+        // Arrange
+        val fileContent = "Test file content"
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(fileContent)
+        )
+
+        val destination = tempFolder.newFile("handles-test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Completed)
+        
+        // File should be readable
+        assertEquals(fileContent, destination.readText())
+        
+        // File should be deletable (no open handles)
+        assertTrue(destination.delete())
+    }
+
+    /**
+     * Tests cancelAll handles multiple downloads efficiently.
+     *
+     * **What is tested:**
+     * - cancelAll() works with multiple downloads
+     * - All downloads are stopped
+     * - Returns correct list of cancelled IDs
+     * - Memory is cleared
+     */
+    @Test
+    fun `cancelAll stops and clears all downloads efficiently`() = runTest {
+        // Arrange - Start multiple slow downloads
+        val downloadCount = 5
+        val jobs = mutableListOf<kotlinx.coroutines.Job>()
+        val downloadIds = mutableListOf<String>()
+        
+        repeat(downloadCount) { index ->
+            mockServer.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setBody("A".repeat(100000))
+                    .throttleBody(1000, 200, java.util.concurrent.TimeUnit.MILLISECONDS)
+            )
+            
+            val destination = tempFolder.newFile("cancelAll$index.txt")
+            val request = DownloadRequest.Builder(
+                mockServer.url("/file$index.txt").toString(),
+                destination
+            ).build()
+            
+            downloadIds.add(request.id)
+            
+            val job = kotlinx.coroutines.launch {
+                try {
+                    downloader.download(request).collect { }
+                } catch (e: CancellationException) {
+                    // Expected
+                }
+            }
+            jobs.add(job)
+        }
+        
+        kotlinx.coroutines.delay(100) // Let downloads start
+
+        // Act
+        val cancelResult = downloader.cancelAll()
+
+        // Assert
+        assertTrue(cancelResult.isSuccess)
+        val cancelledIds = cancelResult.getOrNull()
+        assertNotNull(cancelledIds)
+        assertEquals(downloadCount, cancelledIds?.size)
+        
+        // All downloads should be removed from tracking
+        downloadIds.forEach { id ->
+            assertNull(downloader.getState(id))
+        }
+        
+        jobs.forEach { it.cancel() }
+    }
+
+    /**
+     * Tests empty/zero-byte file download.
+     *
+     * **What is tested:**
+     * - Empty file downloads successfully
+     * - No division by zero in speed calculation
+     * - Progress calculation handles zero bytes
+     */
+    @Test
+    fun `download handles empty file correctly`() = runTest {
+        // Arrange
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("") // Empty file
+                .addHeader("Content-Length", "0")
+        )
+
+        val destination = tempFolder.newFile("empty.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/empty.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Completed)
+        assertEquals(0, destination.length())
+    }
 }

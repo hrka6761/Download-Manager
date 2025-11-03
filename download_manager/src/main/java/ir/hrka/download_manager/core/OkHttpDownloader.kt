@@ -18,6 +18,7 @@ import ir.hrka.download_manager.core.utilities.ValidationSeverity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -67,6 +68,16 @@ class OkHttpDownloader(
      */
     override fun download(request: DownloadRequest): Flow<DownloadState> = flow {
         val downloadId = request.id
+
+        // Check for duplicate ID - prevent silent overwrite
+        if (downloads.containsKey(downloadId)) {
+            val error = DownloadError.UnknownError(
+                "Download with ID '$downloadId' already exists. Use a unique ID or cancel the existing download first."
+            )
+            emit(DownloadState.Failed(downloadId, error, canRetry = false))
+            return@flow
+        }
+
         val context = DownloadContext(request)
 
         // Register download
@@ -89,35 +100,35 @@ class OkHttpDownloader(
 
             // Execute download with retry logic
             var attemptNumber = 0
-            
+
             while (attemptNumber < request.maxRetries) {
                 attemptNumber++
-                
+
                 try {
                     // Execute single attempt
                     executeDownload(request, attemptNumber).collect { state ->
                         context.currentState = state
                         emit(state)
-                        
+
                         // Check if completed successfully
                         if (state is DownloadState.Completed) {
                             return@collect
                         }
                     }
-                    
+
                     // If we reach here, download completed
                     break
-                    
+
                 } catch (e: CancellationException) {
                     // Propagate cancellation
                     throw e
                 } catch (e: Exception) {
                     val error = mapExceptionToError(e)
-                    
+
                     if (attemptNumber < request.maxRetries) {
                         // Wait before retry
                         val delay = request.retryDelay * attemptNumber
-                        kotlinx.coroutines.delay(delay)
+                        delay(delay)
                     } else {
                         // Final attempt failed
                         val failedState = DownloadState.Failed(
@@ -169,9 +180,7 @@ class OkHttpDownloader(
         // Calculate starting point for resume
         val existingBytes = if (request.resumeIfPossible && destination.exists()) {
             destination.length()
-        } else {
-            0L
-        }
+        } else 0
 
         // Emit connecting state
         emit(
@@ -205,9 +214,9 @@ class OkHttpDownloader(
                 // For resumed downloads, add existing bytes to content length
                 val contentLength = resp.body.contentLength()
                 if (contentLength > 0) existingBytes + contentLength else request.expectedSize
-            } else {
+            } else
                 resp.body.contentLength()
-            }
+
 
             // Download file
             resp.body.byteStream().use { input ->
@@ -215,9 +224,10 @@ class OkHttpDownloader(
                     val startTime = System.currentTimeMillis()
                     var downloadedBytes = existingBytes
                     var lastProgressUpdate = 0L
-                    val speedSamples = mutableListOf<Pair<Long, Long>>() // (bytes, timestamp)
+                    // Use ArrayDeque for efficient removal from front (O(1) vs O(n))
+                    val speedSamples = ArrayDeque<Pair<Long, Long>>() // (bytes, timestamp)
                     val buffer = ByteArray(bufferSize)
-                    
+
                     while (currentCoroutineContext().isActive) {
                         val bytesRead = input.read(buffer)
                         if (bytesRead == -1) break
@@ -230,13 +240,13 @@ class OkHttpDownloader(
                         // Update progress periodically
                         if (currentTime - lastProgressUpdate >= progressUpdateInterval) {
                             // Add speed sample
-                            speedSamples.add(Pair(downloadedBytes, currentTime))
+                            speedSamples.addLast(Pair(downloadedBytes, currentTime))
 
-                            // Keep only recent samples (last 5 seconds)
+                            // Keep only recent samples (last 5 seconds) - O(1) removal
                             while (speedSamples.size > 1 &&
                                 currentTime - speedSamples.first().second > 5000
                             ) {
-                                speedSamples.removeAt(0)
+                                speedSamples.removeFirst()
                             }
 
                             // Calculate speeds
@@ -269,12 +279,12 @@ class OkHttpDownloader(
                                     )
                                 )
                                 emit(pausedState)
-                                
+
                                 // Wait until resumed or cancelled
                                 while (context.isPaused && currentCoroutineContext().isActive) {
-                                    kotlinx.coroutines.delay(100)
+                                    delay(100)
                                 }
-                                
+
                                 if (!currentCoroutineContext().isActive) {
                                     throw CancellationException("Download cancelled while paused")
                                 }
@@ -292,7 +302,7 @@ class OkHttpDownloader(
                     val verified =
                         if (request.checksum != null && request.checksumAlgorithm != null) {
                             verifyChecksum(destination, request.checksum, request.checksumAlgorithm)
-                } else false
+                        } else false
 
                     val completedState = DownloadState.Completed(
                         downloadId = downloadId,
@@ -309,9 +319,8 @@ class OkHttpDownloader(
         }
     }
 
-    override suspend fun getState(downloadId: String): DownloadState? {
-        return downloads[downloadId]?.currentState
-    }
+    override suspend fun getState(downloadId: String): DownloadState? =
+        downloads[downloadId]?.currentState
 
     override suspend fun getInfo(downloadId: String): DownloadInfo? {
         val context = downloads[downloadId] ?: return null
@@ -574,14 +583,14 @@ class OkHttpDownloader(
     private suspend fun executeAsync(request: Request): Response =
         suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
-            
+
             // Store call for cancellation in matching download context
             downloads.values.forEach { context ->
                 if (context.request.url == request.url.toString()) {
                     context.currentCall = call
                 }
             }
-            
+
             // Handle cancellation
             continuation.invokeOnCancellation {
                 call.cancel()
@@ -644,29 +653,32 @@ class OkHttpDownloader(
      * Calculates current and average download speed.
      */
     private fun calculateSpeed(
-        samples: List<Pair<Long, Long>>
+        samples: Collection<Pair<Long, Long>>
     ): DownloadSpeed {
         if (samples.size < 2) {
             return DownloadSpeed(0, 0, -1)
         }
-        
+
+        // Convert to list for indexed access (samples are small, this is fine)
+        val samplesList = samples as? List ?: samples.toList()
+
         // Current speed (last two samples)
-        val lastSample = samples.last()
-        val previousSample = samples[samples.size - 2]
+        val lastSample = samplesList.last()
+        val previousSample = samplesList[samplesList.size - 2]
         val currentSpeed = if (lastSample.second > previousSample.second) {
             ((lastSample.first - previousSample.first) * 1000) / (lastSample.second - previousSample.second)
         } else {
             0L
         }
-        
+
         // Average speed (all samples)
-        val firstSample = samples.first()
+        val firstSample = samplesList.first()
         val averageSpeed = if (lastSample.second > firstSample.second) {
             ((lastSample.first - firstSample.first) * 1000) / (lastSample.second - firstSample.second)
         } else {
             0L
         }
-        
+
         // Estimated time remaining
         val remainingTime = if (averageSpeed > 0 && samples.isNotEmpty()) {
             // This is simplified; actual implementation would need total bytes
@@ -674,7 +686,7 @@ class OkHttpDownloader(
         } else {
             -1L
         }
-        
+
         return DownloadSpeed(
             currentBytesPerSecond = currentSpeed,
             averageBytesPerSecond = averageSpeed,
