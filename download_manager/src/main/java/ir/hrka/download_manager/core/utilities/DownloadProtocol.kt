@@ -3,7 +3,7 @@ package ir.hrka.download_manager.core.utilities
 /**
  * Supported download protocols.
  *
- * Represents the various protocols that the download manager can handle.
+ * Currently supports HTTP, HTTPS, FTP, and FTPS protocols.
  * Each protocol may require different implementation strategies.
  *
  * @property scheme The URL scheme identifier (e.g., "http", "https", "ftp")
@@ -59,43 +59,6 @@ enum class DownloadProtocol(
     FTPS(
         scheme = "ftps",
         defaultPort = 990,
-        requiresAuthentication = true,
-        supportsResume = true
-    ),
-
-    /**
-     * SFTP protocol (SSH File Transfer Protocol).
-     * Port: 22
-     * Requires: SSH authentication
-     * Supports: Partial file transfer
-     */
-    SFTP(
-        scheme = "sftp",
-        defaultPort = 22,
-        requiresAuthentication = true,
-        supportsResume = true
-    ),
-
-    /**
-     * SMB/CIFS protocol (Windows file sharing).
-     * Port: 445
-     * Used for: Local network file servers
-     */
-    SMB(
-        scheme = "smb",
-        defaultPort = 445,
-        requiresAuthentication = true,
-        supportsResume = false
-    ),
-
-    /**
-     * WebDAV protocol (Web Distributed Authoring and Versioning).
-     * Uses: HTTP/HTTPS with DAV extensions
-     * Port: Same as HTTP/HTTPS
-     */
-    WEBDAV(
-        scheme = "webdav",
-        defaultPort = 80,
         requiresAuthentication = true,
         supportsResume = true
     );

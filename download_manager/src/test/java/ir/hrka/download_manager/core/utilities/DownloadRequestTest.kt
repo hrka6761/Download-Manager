@@ -21,7 +21,7 @@ import java.io.File
  * - Builder Pattern Tests (3 tests)
  * - Immutable Copy Methods (3 tests)
  * - ID Parameter (4 tests)
- * - URL Parameter (15 tests) - Comprehensive server support
+ * - URL Parameter (18 tests) - Supports HTTP, HTTPS, FTP, FTPS
  * - Destination Parameter (3 tests)
  * - Headers Parameter (4 tests)
  * - Boolean Parameters (12 tests)
@@ -33,7 +33,7 @@ import java.io.File
  * - Metadata Parameter (5 tests)
  * - Combined & Edge Case Tests (6 tests)
  *
- * **Total Tests:** 95
+ * **Total Tests:** 116
  *
  * @see DownloadRequest
  * @see DownloadRequest.Builder
@@ -450,44 +450,9 @@ class DownloadRequestTest {
         assertEquals(DownloadProtocol.FTPS, request.getProtocol())
     }
 
-    /**
-     * Tests SFTP protocol is supported.
-     */
-    @Test
-    fun `url supports sftp protocol`() {
-        val destination = tempFolder.newFile()
-        val request = DownloadRequest.Builder("sftp://server.com:22/path/file", destination).build()
-
-        assertEquals("sftp://server.com:22/path/file", request.url)
-        assertEquals(DownloadProtocol.SFTP, request.getProtocol())
-    }
 
     /**
-     * Tests SMB protocol is supported.
-     */
-    @Test
-    fun `url supports smb protocol`() {
-        val destination = tempFolder.newFile()
-        val request = DownloadRequest.Builder("smb://fileserver/share/file.zip", destination).build()
-
-        assertEquals("smb://fileserver/share/file.zip", request.url)
-        assertEquals(DownloadProtocol.SMB, request.getProtocol())
-    }
-
-    /**
-     * Tests WebDAV protocol is supported.
-     */
-    @Test
-    fun `url supports webdav protocol`() {
-        val destination = tempFolder.newFile()
-        val request = DownloadRequest.Builder("webdav://webdav.server.com/files/document.pdf", destination).build()
-
-        assertEquals("webdav://webdav.server.com/files/document.pdf", request.url)
-        assertEquals(DownloadProtocol.WEBDAV, request.getProtocol())
-    }
-
-    /**
-     * Tests file protocol is rejected (local file system, not network download).
+     * Tests unsupported protocols are rejected.
      */
     @Test(expected = IllegalArgumentException::class)
     fun `url rejects file protocol`() {
@@ -496,7 +461,7 @@ class DownloadRequestTest {
     }
 
     /**
-     * Tests WebSocket protocol is rejected (streaming, not file download).
+     * Tests WebSocket protocol is rejected.
      */
     @Test(expected = IllegalArgumentException::class)
     fun `url rejects websocket protocol`() {
@@ -511,6 +476,33 @@ class DownloadRequestTest {
     fun `url rejects mailto protocol`() {
         val destination = tempFolder.newFile()
         DownloadRequest.Builder("mailto:user@example.com", destination).build()
+    }
+
+    /**
+     * Tests SFTP protocol is rejected (not supported).
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun `url rejects sftp protocol`() {
+        val destination = tempFolder.newFile()
+        DownloadRequest.Builder("sftp://server.com/file", destination).build()
+    }
+
+    /**
+     * Tests SMB protocol is rejected (not supported).
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun `url rejects smb protocol`() {
+        val destination = tempFolder.newFile()
+        DownloadRequest.Builder("smb://server/share/file", destination).build()
+    }
+
+    /**
+     * Tests WebDAV protocol is rejected (not supported).
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun `url rejects webdav protocol`() {
+        val destination = tempFolder.newFile()
+        DownloadRequest.Builder("webdav://server.com/file", destination).build()
     }
 
     // ==================== Destination Parameter Tests ====================
@@ -1356,16 +1348,6 @@ class DownloadRequestTest {
         // FTPS servers (secure FTP)
         val ftps = DownloadRequest.Builder("ftps://secure.ftp.com:990/files/encrypted.bin", destination).build()
         
-        // SFTP servers (SSH-based)
-        val sftp = DownloadRequest.Builder("sftp://ssh.server.com:22/home/user/file.zip", destination).build()
-        
-        // SMB/CIFS servers (Windows file sharing)
-        val smb = DownloadRequest.Builder("smb://fileserver.local/share/documents/report.pdf", destination).build()
-        val smbAuth = DownloadRequest.Builder("smb://user:pass@192.168.1.5/shared/file.zip", destination).build()
-
-        // WebDAV servers
-        val webdav = DownloadRequest.Builder("webdav://webdav.example.com/files/document.docx", destination).build()
-        
         // Internal network
         val internal = DownloadRequest.Builder("http://192.168.1.100:8080/files/download", destination).build()
 
@@ -1380,9 +1362,6 @@ class DownloadRequestTest {
         assertEquals(DownloadProtocol.HTTPS, https.getProtocol())
         assertEquals(DownloadProtocol.FTP, ftp.getProtocol())
         assertEquals(DownloadProtocol.FTPS, ftps.getProtocol())
-        assertEquals(DownloadProtocol.SFTP, sftp.getProtocol())
-        assertEquals(DownloadProtocol.SMB, smb.getProtocol())
-        assertEquals(DownloadProtocol.WEBDAV, webdav.getProtocol())
     }
     
     /**
@@ -1392,18 +1371,18 @@ class DownloadRequestTest {
     fun `supportsResume considers protocol capability and configuration`() {
         val destination = tempFolder.newFile()
         
-        // HTTP with resume enabled (default)
+        // HTTPS with resume enabled (default)
         val httpResume = DownloadRequest.Builder("https://example.com/file", destination).build()
         assertTrue(httpResume.supportsResume())
         
-        // HTTP with resume disabled
+        // HTTPS with resume disabled
         val httpNoResume = DownloadRequest.Builder("https://example.com/file", destination)
             .setResumeIfPossible(false).build()
         assertFalse(httpNoResume.supportsResume())
         
-        // SMB doesn't support resume (protocol limitation)
-        val smb = DownloadRequest.Builder("smb://server/share/file", destination).build()
-        assertFalse(smb.supportsResume())
+        // FTP supports resume
+        val ftp = DownloadRequest.Builder("ftp://server.com/file", destination).build()
+        assertTrue(ftp.supportsResume())
     }
 
     /**
@@ -1463,5 +1442,554 @@ class DownloadRequestTest {
         assertEquals(original.url, copied.url) // Preserved
         assertEquals(original.expectedSize, copied.expectedSize) // Preserved
         assertEquals(original.priority, copied.priority) // Preserved
+    }
+
+    // ==================== Additional Edge Cases ====================
+
+    /**
+     * Tests ID with special characters.
+     */
+    @Test
+    fun `id accepts special characters and unicode`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setId("download-123!@#$%^&*()")
+            .build()
+        
+        assertEquals("download-123!@#$%^&*()", request.id)
+    }
+
+    /**
+     * Tests ID with unicode characters.
+     */
+    @Test
+    fun `id accepts unicode characters`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setId("下载-文件-123")
+            .build()
+        
+        assertEquals("下载-文件-123", request.id)
+    }
+
+    /**
+     * Tests URL with unicode domain (internationalized domain).
+     */
+    @Test
+    fun `url supports unicode in domain`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://例え.com/file.zip", destination).build()
+        
+        assertEquals("https://例え.com/file.zip", request.url)
+    }
+
+    /**
+     * Tests addHeader() overwrites when same key used twice.
+     */
+    @Test
+    fun `addHeader overwrites previous value for same key`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("Key1", "OldValue")
+            .addHeader("Key1", "NewValue")
+            .build()
+        
+        assertEquals("NewValue", request.headers["Key1"])
+        assertEquals(1, request.headers.size)
+    }
+
+    /**
+     * Tests addMetadata() overwrites when same key used twice.
+     */
+    @Test
+    fun `addMetadata overwrites previous value for same key`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .addMetadata("key1", "old")
+            .addMetadata("key1", "new")
+            .build()
+        
+        assertEquals("new", request.metadata["key1"])
+        assertEquals(1, request.metadata.size)
+    }
+
+    /**
+     * Tests withAuthToken() preserves existing headers.
+     */
+    @Test
+    fun `withAuthToken preserves other headers`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("X-Custom", "Value")
+            .build()
+        
+        val withAuth = original.withAuthToken("token123")
+        
+        assertEquals(2, withAuth.headers.size)
+        assertEquals("Value", withAuth.headers["X-Custom"])
+        assertEquals("Bearer token123", withAuth.headers["Authorization"])
+    }
+
+    /**
+     * Tests withAuthToken() overwrites existing Authorization header.
+     */
+    @Test
+    fun `withAuthToken overwrites existing Authorization header`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("Authorization", "Bearer oldtoken")
+            .build()
+        
+        val withNewAuth = original.withAuthToken("newtoken")
+        
+        assertEquals("Bearer newtoken", withNewAuth.headers["Authorization"])
+    }
+
+    /**
+     * Tests withHeaders() can override existing Authorization.
+     */
+    @Test
+    fun `withHeaders can override existing headers`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("Key1", "Value1")
+            .build()
+        
+        val updated = original.withHeaders(mapOf("Key1" to "NewValue1", "Key2" to "Value2"))
+        
+        assertEquals("NewValue1", updated.headers["Key1"])
+        assertEquals("Value2", updated.headers["Key2"])
+        assertEquals(2, updated.headers.size)
+    }
+
+    /**
+     * Tests getProtocol() for all supported protocols.
+     */
+    @Test
+    fun `getProtocol returns correct enum for all protocols`() {
+        val destination = tempFolder.newFile()
+        
+        val http = DownloadRequest.Builder("http://example.com/file", destination).build()
+        assertEquals(DownloadProtocol.HTTP, http.getProtocol())
+        
+        val https = DownloadRequest.Builder("https://example.com/file", destination).build()
+        assertEquals(DownloadProtocol.HTTPS, https.getProtocol())
+        
+        val ftp = DownloadRequest.Builder("ftp://ftp.server.com/file", destination).build()
+        assertEquals(DownloadProtocol.FTP, ftp.getProtocol())
+        
+        val ftps = DownloadRequest.Builder("ftps://secure.server.com/file", destination).build()
+        assertEquals(DownloadProtocol.FTPS, ftps.getProtocol())
+    }
+
+    /**
+     * Tests supportsResume() for all protocol combinations.
+     */
+    @Test
+    fun `supportsResume handles all protocol and configuration combinations`() {
+        val destination = tempFolder.newFile()
+        
+        // HTTP with resume enabled
+        val httpResume = DownloadRequest.Builder("http://example.com/file", destination)
+            .setResumeIfPossible(true).build()
+        assertTrue(httpResume.supportsResume())
+        
+        // HTTP with resume disabled
+        val httpNoResume = DownloadRequest.Builder("http://example.com/file", destination)
+            .setResumeIfPossible(false).build()
+        assertFalse(httpNoResume.supportsResume())
+        
+        // FTP with resume enabled
+        val ftpResume = DownloadRequest.Builder("ftp://ftp.server.com/file", destination)
+            .setResumeIfPossible(true).build()
+        assertTrue(ftpResume.supportsResume())
+        
+        // FTPS with resume disabled
+        val ftpsNoResume = DownloadRequest.Builder("ftps://secure.server.com/file", destination)
+            .setResumeIfPossible(false).build()
+        assertFalse(ftpsNoResume.supportsResume())
+    }
+
+    /**
+     * Tests Builder setHeaders() completely replaces headers (not merge).
+     */
+    @Test
+    fun `Builder setHeaders replaces not merges`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("Old1", "Value1")
+            .addHeader("Old2", "Value2")
+            .setHeaders(mapOf("New1" to "NewValue1", "New2" to "NewValue2"))
+            .build()
+        
+        assertEquals(2, request.headers.size)
+        assertNull(request.headers["Old1"])
+        assertNull(request.headers["Old2"])
+        assertEquals("NewValue1", request.headers["New1"])
+        assertEquals("NewValue2", request.headers["New2"])
+    }
+
+    /**
+     * Tests Builder setMetadata() completely replaces metadata (not merge).
+     */
+    @Test
+    fun `Builder setMetadata replaces not merges`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .addMetadata("old1", "value1")
+            .setMetadata(mapOf("new1" to "newValue1"))
+            .build()
+        
+        assertEquals(1, request.metadata.size)
+        assertNull(request.metadata["old1"])
+        assertEquals("newValue1", request.metadata["new1"])
+    }
+
+    /**
+     * Tests connectTimeout at boundary value 1ms.
+     */
+    @Test
+    fun `connectTimeout boundary at 1 millisecond works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setConnectTimeout(1)
+            .build()
+        
+        assertEquals(1, request.connectTimeout)
+    }
+
+    /**
+     * Tests connectTimeout at maximum boundary 5 minutes.
+     */
+    @Test
+    fun `connectTimeout boundary at 5 minutes works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setConnectTimeout(300_000)
+            .build()
+        
+        assertEquals(300_000, request.connectTimeout)
+    }
+
+    /**
+     * Tests readTimeout at boundary value 1ms.
+     */
+    @Test
+    fun `readTimeout boundary at 1 millisecond works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setReadTimeout(1)
+            .build()
+        
+        assertEquals(1, request.readTimeout)
+    }
+
+    /**
+     * Tests readTimeout at maximum boundary 1 hour.
+     */
+    @Test
+    fun `readTimeout boundary at 1 hour works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setReadTimeout(3_600_000)
+            .build()
+        
+        assertEquals(3_600_000, request.readTimeout)
+    }
+
+    /**
+     * Tests retryDelay at boundary 0.
+     */
+    @Test
+    fun `retryDelay at 0 milliseconds works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setRetryDelay(0)
+            .build()
+        
+        assertEquals(0, request.retryDelay)
+    }
+
+    /**
+     * Tests retryDelay at maximum boundary 10 minutes.
+     */
+    @Test
+    fun `retryDelay at 10 minutes works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setRetryDelay(600_000)
+            .build()
+        
+        assertEquals(600_000, request.retryDelay)
+    }
+
+    /**
+     * Tests maxRetries at boundary 0.
+     */
+    @Test
+    fun `maxRetries at 0 works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setMaxRetries(0)
+            .build()
+        
+        assertEquals(0, request.maxRetries)
+    }
+
+    /**
+     * Tests maxRetries at maximum boundary 100.
+     */
+    @Test
+    fun `maxRetries at 100 works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setMaxRetries(100)
+            .build()
+        
+        assertEquals(100, request.maxRetries)
+    }
+
+    /**
+     * Tests expectedSize at boundary -1 (unknown).
+     */
+    @Test
+    fun `expectedSize at minus 1 works`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setExpectedSize(-1)
+            .build()
+        
+        assertEquals(-1, request.expectedSize)
+    }
+
+    /**
+     * Tests expectedSize with very large value.
+     */
+    @Test
+    fun `expectedSize accepts very large values`() {
+        val destination = tempFolder.newFile()
+        val hundredGB = 100L * 1024 * 1024 * 1024
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setExpectedSize(hundredGB)
+            .build()
+        
+        assertEquals(hundredGB, request.expectedSize)
+    }
+
+    /**
+     * Tests DownloadPriority enum has correct values.
+     */
+    @Test
+    fun `DownloadPriority enum has all 4 values in order`() {
+        val priorities = DownloadPriority.entries
+        
+        assertEquals(4, priorities.size)
+        assertEquals(DownloadPriority.LOW, priorities[0])
+        assertEquals(DownloadPriority.NORMAL, priorities[1])
+        assertEquals(DownloadPriority.HIGH, priorities[2])
+        assertEquals(DownloadPriority.CRITICAL, priorities[3])
+    }
+
+    /**
+     * Tests immutability: withAuthToken() doesn't modify original.
+     */
+    @Test
+    fun `withAuthToken maintains immutability`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination).build()
+        val originalHeaderCount = original.headers.size
+        
+        val withAuth = original.withAuthToken("token")
+        
+        assertEquals(originalHeaderCount, original.headers.size)
+        assertEquals(originalHeaderCount + 1, withAuth.headers.size)
+        assertNotSame(original, withAuth)
+    }
+
+    /**
+     * Tests immutability: withHeaders() doesn't modify original.
+     */
+    @Test
+    fun `withHeaders maintains immutability`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination)
+            .addHeader("Key1", "Value1")
+            .build()
+        
+        val updated = original.withHeaders(mapOf("Key2" to "Value2"))
+        
+        assertEquals(1, original.headers.size)
+        assertEquals(2, updated.headers.size)
+        assertNotSame(original, updated)
+    }
+
+    /**
+     * Tests immutability: withMetadata() doesn't modify original.
+     */
+    @Test
+    fun `withMetadata maintains immutability`() {
+        val destination = tempFolder.newFile()
+        val original = DownloadRequest.Builder("https://example.com/file", destination)
+            .addMetadata("key1", "value1")
+            .build()
+        
+        val updated = original.withMetadata(mapOf("key2" to "value2"))
+        
+        assertEquals(1, original.metadata.size)
+        assertEquals(2, updated.metadata.size)
+        assertNotSame(original, updated)
+    }
+
+    /**
+     * Tests auto-generated ID uniqueness across rapid creation.
+     */
+    @Test
+    fun `auto-generated IDs are unique even in rapid succession`() {
+        val destination = tempFolder.newFile()
+        val ids = (1..1000).map {
+            DownloadRequest.Builder("https://example.com/file", destination).build().id
+        }.toSet()
+        
+        assertEquals(1000, ids.size) // All unique
+    }
+
+    /**
+     * Tests auto-generated ID format includes timestamp and counter.
+     */
+    @Test
+    fun `auto-generated ID has correct format`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination).build()
+        
+        assertTrue(request.id.matches(Regex("download_\\d+_\\d+")))
+    }
+
+    /**
+     * Tests setChecksum validates both parameters required together.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun `setChecksum requires both parameters but build fails if algorithm missing`() {
+        val destination = tempFolder.newFile()
+        DownloadRequest(
+            url = "https://example.com/file",
+            destination = destination,
+            checksum = "abc123" // Missing algorithm
+        )
+    }
+
+    /**
+     * Tests URL with fragment/anchor.
+     */
+    @Test
+    fun `url supports fragment anchor`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/page#download-section", destination).build()
+        
+        assertEquals("https://example.com/page#download-section", request.url)
+    }
+
+    /**
+     * Tests URL with multiple query parameters.
+     */
+    @Test
+    fun `url supports multiple query parameters`() {
+        val destination = tempFolder.newFile()
+        val url = "https://api.example.com/download?id=123&token=abc&format=zip&v=2"
+        val request = DownloadRequest.Builder(url, destination).build()
+        
+        assertEquals(url, request.url)
+    }
+
+    /**
+     * Tests all timeout/retry parameters at their extremes simultaneously.
+     */
+    @Test
+    fun `all timeout and retry parameters at extremes work together`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination)
+            .setConnectTimeout(300_000) // Max
+            .setReadTimeout(3_600_000) // Max
+            .setMaxRetries(100) // Max
+            .setRetryDelay(600_000) // Max
+            .build()
+        
+        assertEquals(300_000, request.connectTimeout)
+        assertEquals(3_600_000, request.readTimeout)
+        assertEquals(100, request.maxRetries)
+        assertEquals(600_000, request.retryDelay)
+    }
+
+    /**
+     * Tests destination with very long nested path.
+     */
+    @Test
+    fun `destination accepts very deeply nested path`() {
+        val deepPath = (1..20).joinToString("/") { "dir$it" }
+        val destination = File(tempFolder.root, "$deepPath/file.zip")
+        val request = DownloadRequest.Builder("https://example.com/file", destination).build()
+        
+        assertEquals(destination, request.destination)
+    }
+
+    /**
+     * Tests empty headers map is truly immutable.
+     */
+    @Test
+    fun `empty headers map is immutable`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination).build()
+        
+        // Should not be able to modify
+        try {
+            (request.headers as MutableMap).put("Key", "Value")
+            fail("Should not be able to modify headers")
+        } catch (e: UnsupportedOperationException) {
+            // Expected
+        } catch (e: ClassCastException) {
+            // Also acceptable (immutable map)
+        }
+    }
+
+    /**
+     * Tests empty metadata map is truly immutable.
+     */
+    @Test
+    fun `empty metadata map is immutable`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("https://example.com/file", destination).build()
+        
+        // Should not be able to modify
+        try {
+            (request.metadata as MutableMap).put("key", "value")
+            fail("Should not be able to modify metadata")
+        } catch (e: UnsupportedOperationException) {
+            // Expected
+        } catch (e: ClassCastException) {
+            // Also acceptable (immutable map)
+        }
+    }
+
+    /**
+     * Tests FTP URL with anonymous login.
+     */
+    @Test
+    fun `url supports FTP anonymous login`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("ftp://anonymous@ftp.example.com/pub/file.zip", destination).build()
+        
+        assertEquals("ftp://anonymous@ftp.example.com/pub/file.zip", request.url)
+        assertEquals(DownloadProtocol.FTP, request.getProtocol())
+    }
+
+    /**
+     * Tests FTPS URL with credentials and custom port.
+     */
+    @Test
+    fun `url supports FTPS with credentials and port`() {
+        val destination = tempFolder.newFile()
+        val request = DownloadRequest.Builder("ftps://user:pass@secure.server.com:21/files/data.bin", destination).build()
+        
+        assertEquals("ftps://user:pass@secure.server.com:21/files/data.bin", request.url)
+        assertEquals(DownloadProtocol.FTPS, request.getProtocol())
     }
 }

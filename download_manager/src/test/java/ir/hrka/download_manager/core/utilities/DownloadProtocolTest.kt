@@ -7,7 +7,7 @@ import org.junit.Test
  * Comprehensive test suite for [DownloadProtocol] enum.
  *
  * Tests protocol detection, validation, and capabilities for all supported protocols:
- * HTTP, HTTPS, FTP, FTPS, SFTP, SMB, and WebDAV.
+ * HTTP, HTTPS, FTP, and FTPS.
  *
  * **Test Coverage:**
  * - Protocol detection from URLs
@@ -16,7 +16,7 @@ import org.junit.Test
  * - Case-insensitive protocol matching
  * - Invalid protocol handling
  *
- * **Total Tests:** 25
+ * **Total Tests:** 36
  *
  * @see DownloadProtocol
  */
@@ -73,29 +73,6 @@ class DownloadProtocolTest {
         assertEquals(DownloadProtocol.FTPS, DownloadProtocol.fromUrl("ftps://secure.ftp.com/file"))
     }
 
-    /**
-     * Tests SFTP protocol detection.
-     */
-    @Test
-    fun `fromUrl detects SFTP protocol`() {
-        assertEquals(DownloadProtocol.SFTP, DownloadProtocol.fromUrl("sftp://ssh.server.com/file"))
-    }
-
-    /**
-     * Tests SMB protocol detection.
-     */
-    @Test
-    fun `fromUrl detects SMB protocol`() {
-        assertEquals(DownloadProtocol.SMB, DownloadProtocol.fromUrl("smb://fileserver/share/file"))
-    }
-
-    /**
-     * Tests WebDAV protocol detection.
-     */
-    @Test
-    fun `fromUrl detects WEBDAV protocol`() {
-        assertEquals(DownloadProtocol.WEBDAV, DownloadProtocol.fromUrl("webdav://server.com/files/doc"))
-    }
 
     /**
      * Tests unsupported protocol returns null.
@@ -106,6 +83,9 @@ class DownloadProtocolTest {
         assertNull(DownloadProtocol.fromUrl("ws://example.com/socket"))
         assertNull(DownloadProtocol.fromUrl("mailto:user@example.com"))
         assertNull(DownloadProtocol.fromUrl("tel:+1234567890"))
+        assertNull(DownloadProtocol.fromUrl("sftp://server.com/file"))
+        assertNull(DownloadProtocol.fromUrl("smb://server/share/file"))
+        assertNull(DownloadProtocol.fromUrl("webdav://server.com/files"))
     }
 
     // ==================== Protocol Properties Tests ====================
@@ -162,44 +142,6 @@ class DownloadProtocolTest {
         assertTrue(ftps.supportsResume)
     }
 
-    /**
-     * Tests SFTP protocol properties.
-     */
-    @Test
-    fun `SFTP protocol has correct properties`() {
-        val sftp = DownloadProtocol.SFTP
-
-        assertEquals("sftp", sftp.scheme)
-        assertEquals(22, sftp.defaultPort)
-        assertTrue(sftp.requiresAuthentication)
-        assertTrue(sftp.supportsResume)
-    }
-
-    /**
-     * Tests SMB protocol properties.
-     */
-    @Test
-    fun `SMB protocol has correct properties`() {
-        val smb = DownloadProtocol.SMB
-
-        assertEquals("smb", smb.scheme)
-        assertEquals(445, smb.defaultPort)
-        assertTrue(smb.requiresAuthentication)
-        assertFalse(smb.supportsResume) // SMB doesn't support partial transfers
-    }
-
-    /**
-     * Tests WebDAV protocol properties.
-     */
-    @Test
-    fun `WEBDAV protocol has correct properties`() {
-        val webdav = DownloadProtocol.WEBDAV
-
-        assertEquals("webdav", webdav.scheme)
-        assertEquals(80, webdav.defaultPort)
-        assertTrue(webdav.requiresAuthentication)
-        assertTrue(webdav.supportsResume)
-    }
 
     // ==================== Helper Methods Tests ====================
 
@@ -212,9 +154,6 @@ class DownloadProtocolTest {
         assertTrue(DownloadProtocol.isSupported("https://example.com/file"))
         assertTrue(DownloadProtocol.isSupported("ftp://ftp.example.com/file"))
         assertTrue(DownloadProtocol.isSupported("ftps://secure.ftp.com/file"))
-        assertTrue(DownloadProtocol.isSupported("sftp://ssh.server.com/file"))
-        assertTrue(DownloadProtocol.isSupported("smb://fileserver/file"))
-        assertTrue(DownloadProtocol.isSupported("webdav://webdav.server.com/file"))
     }
 
     /**
@@ -225,23 +164,23 @@ class DownloadProtocolTest {
         assertFalse(DownloadProtocol.isSupported("file:///path"))
         assertFalse(DownloadProtocol.isSupported("ws://example.com"))
         assertFalse(DownloadProtocol.isSupported("mailto:user@example.com"))
+        assertFalse(DownloadProtocol.isSupported("sftp://server.com/file"))
+        assertFalse(DownloadProtocol.isSupported("smb://server/share"))
+        assertFalse(DownloadProtocol.isSupported("webdav://server.com/dav"))
     }
 
     /**
      * Tests supportedSchemes() returns all protocol schemes.
      */
     @Test
-    fun `supportedSchemes returns all 7 protocols`() {
+    fun `supportedSchemes returns all 4 protocols`() {
         val schemes = DownloadProtocol.supportedSchemes()
 
-        assertEquals(7, schemes.size)
+        assertEquals(4, schemes.size)
         assertTrue(schemes.contains("http"))
         assertTrue(schemes.contains("https"))
         assertTrue(schemes.contains("ftp"))
         assertTrue(schemes.contains("ftps"))
-        assertTrue(schemes.contains("sftp"))
-        assertTrue(schemes.contains("smb"))
-        assertTrue(schemes.contains("webdav"))
     }
 
     /**
@@ -254,25 +193,22 @@ class DownloadProtocolTest {
         assertTrue(protocolString.contains("HTTP"))
         assertTrue(protocolString.contains("HTTPS"))
         assertTrue(protocolString.contains("FTP"))
-        assertTrue(protocolString.contains("SFTP"))
+        assertTrue(protocolString.contains("FTPS"))
         assertTrue(protocolString.contains(", ")) // Comma-separated
     }
 
     /**
-     * Tests protocol enum has exactly 7 values.
+     * Tests protocol enum has exactly 4 values.
      */
     @Test
-    fun `enum has exactly 7 supported protocols`() {
+    fun `enum has exactly 4 supported protocols`() {
         val protocols = DownloadProtocol.values()
 
-        assertEquals(7, protocols.size)
+        assertEquals(4, protocols.size)
         assertEquals(DownloadProtocol.HTTP, protocols[0])
         assertEquals(DownloadProtocol.HTTPS, protocols[1])
         assertEquals(DownloadProtocol.FTP, protocols[2])
         assertEquals(DownloadProtocol.FTPS, protocols[3])
-        assertEquals(DownloadProtocol.SFTP, protocols[4])
-        assertEquals(DownloadProtocol.SMB, protocols[5])
-        assertEquals(DownloadProtocol.WEBDAV, protocols[6])
     }
 
     /**
@@ -283,24 +219,19 @@ class DownloadProtocolTest {
         assertEquals(DownloadProtocol.HTTP, DownloadProtocol.fromUrl("HTTP://EXAMPLE.COM/FILE"))
         assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("HTTPS://EXAMPLE.COM/FILE"))
         assertEquals(DownloadProtocol.FTP, DownloadProtocol.fromUrl("FTP://SERVER.COM/FILE"))
-        assertEquals(DownloadProtocol.SFTP, DownloadProtocol.fromUrl("SFTP://SERVER.COM/FILE"))
+        assertEquals(DownloadProtocol.FTPS, DownloadProtocol.fromUrl("FTPS://SERVER.COM/FILE"))
     }
 
     /**
-     * Tests resume support varies by protocol.
+     * Tests resume support for all protocols.
      */
     @Test
-    fun `resume support varies by protocol`() {
-        // Protocols that support resume
+    fun `all protocols support resume`() {
+        // All protocols support resume
         assertTrue(DownloadProtocol.HTTP.supportsResume)
         assertTrue(DownloadProtocol.HTTPS.supportsResume)
         assertTrue(DownloadProtocol.FTP.supportsResume)
         assertTrue(DownloadProtocol.FTPS.supportsResume)
-        assertTrue(DownloadProtocol.SFTP.supportsResume)
-        assertTrue(DownloadProtocol.WEBDAV.supportsResume)
-        
-        // Protocols that don't support resume
-        assertFalse(DownloadProtocol.SMB.supportsResume)
     }
 
     /**
@@ -315,9 +246,180 @@ class DownloadProtocolTest {
         
         // Protocols that typically require auth
         assertTrue(DownloadProtocol.FTPS.requiresAuthentication)
-        assertTrue(DownloadProtocol.SFTP.requiresAuthentication)
-        assertTrue(DownloadProtocol.SMB.requiresAuthentication)
-        assertTrue(DownloadProtocol.WEBDAV.requiresAuthentication)
+    }
+
+    // ==================== Edge Cases & Boundary Tests ====================
+
+    /**
+     * Tests fromUrl() handles empty string correctly.
+     */
+    @Test
+    fun `fromUrl returns null for empty string`() {
+        assertNull(DownloadProtocol.fromUrl(""))
+    }
+
+    /**
+     * Tests fromUrl() handles blank string correctly.
+     */
+    @Test
+    fun `fromUrl returns null for blank string`() {
+        assertNull(DownloadProtocol.fromUrl("   "))
+    }
+
+    /**
+     * Tests fromUrl() handles URL without slashes.
+     */
+    @Test
+    fun `fromUrl returns null for scheme without slashes`() {
+        assertNull(DownloadProtocol.fromUrl("http:example.com"))
+        assertNull(DownloadProtocol.fromUrl("https:example.com/file"))
+    }
+
+    /**
+     * Tests fromUrl() handles URL with only scheme and slashes.
+     */
+    @Test
+    fun `fromUrl returns null for incomplete URL`() {
+        assertNull(DownloadProtocol.fromUrl("http://"))
+        assertNull(DownloadProtocol.fromUrl("https://"))
+    }
+
+    /**
+     * Tests fromUrl() handles misspelled protocols.
+     */
+    @Test
+    fun `fromUrl returns null for typo in protocol`() {
+        assertNull(DownloadProtocol.fromUrl("htttp://example.com/file"))
+        assertNull(DownloadProtocol.fromUrl("htps://example.com/file"))
+        assertNull(DownloadProtocol.fromUrl("htp://example.com/file"))
+    }
+
+    /**
+     * Tests fromUrl() detects protocol with mixed case in URL path.
+     */
+    @Test
+    fun `fromUrl detects protocol with mixed case URL path`() {
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://ExAmPlE.CoM/FiLe"))
+        assertEquals(DownloadProtocol.HTTP, DownloadProtocol.fromUrl("HTTP://example.com/FiLe"))
+    }
+
+    /**
+     * Tests fromUrl() with URL containing query parameters.
+     */
+    @Test
+    fun `fromUrl detects protocol with query parameters`() {
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://example.com/file?key=value&token=abc"))
+        assertEquals(DownloadProtocol.FTP, DownloadProtocol.fromUrl("ftp://ftp.example.com/path?param=value"))
+    }
+
+    /**
+     * Tests fromUrl() with URL containing anchor/fragment.
+     */
+    @Test
+    fun `fromUrl detects protocol with anchor fragment`() {
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://example.com/file.zip#section"))
+    }
+
+    /**
+     * Tests fromUrl() with URL containing authentication credentials.
+     */
+    @Test
+    fun `fromUrl detects protocol with credentials in URL`() {
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://user:pass@example.com/file"))
+        assertEquals(DownloadProtocol.FTP, DownloadProtocol.fromUrl("ftp://anonymous:email@ftp.server.com/file"))
+        assertEquals(DownloadProtocol.FTPS, DownloadProtocol.fromUrl("ftps://user@secure.server.com/file"))
+    }
+
+    /**
+     * Tests fromUrl() with very long URL.
+     */
+    @Test
+    fun `fromUrl detects protocol with very long URL`() {
+        val longPath = "a".repeat(1000)
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://example.com/$longPath/file.zip"))
+    }
+
+    /**
+     * Tests isSupported() handles empty string.
+     */
+    @Test
+    fun `isSupported returns false for empty string`() {
+        assertFalse(DownloadProtocol.isSupported(""))
+    }
+
+    /**
+     * Tests isSupported() handles blank string.
+     */
+    @Test
+    fun `isSupported returns false for blank string`() {
+        assertFalse(DownloadProtocol.isSupported("   "))
+    }
+
+    /**
+     * Tests getSupportedProtocolsString() contains all protocols.
+     */
+    @Test
+    fun `getSupportedProtocolsString contains all 4 protocols`() {
+        val protocolString = DownloadProtocol.getSupportedProtocolsString()
+        
+        val protocols = protocolString.split(", ")
+        assertEquals(4, protocols.size)
+        assertEquals("HTTP", protocols[0])
+        assertEquals("HTTPS", protocols[1])
+        assertEquals("FTP", protocols[2])
+        assertEquals("FTPS", protocols[3])
+    }
+
+    /**
+     * Tests supportedSchemes() returns protocols in correct order.
+     */
+    @Test
+    fun `supportedSchemes returns protocols in enum order`() {
+        val schemes = DownloadProtocol.supportedSchemes()
+        
+        assertEquals("http", schemes[0])
+        assertEquals("https", schemes[1])
+        assertEquals("ftp", schemes[2])
+        assertEquals("ftps", schemes[3])
+    }
+
+    /**
+     * Tests protocol detection with URL containing port number.
+     */
+    @Test
+    fun `fromUrl detects protocol with custom port`() {
+        assertEquals(DownloadProtocol.HTTP, DownloadProtocol.fromUrl("http://example.com:8080/file"))
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://example.com:443/file"))
+        assertEquals(DownloadProtocol.FTP, DownloadProtocol.fromUrl("ftp://ftp.server.com:2121/file"))
+        assertEquals(DownloadProtocol.FTPS, DownloadProtocol.fromUrl("ftps://secure.server.com:990/file"))
+    }
+
+    /**
+     * Tests fromUrl() with IPv6 addresses.
+     */
+    @Test
+    fun `fromUrl detects protocol with IPv6 address`() {
+        assertEquals(DownloadProtocol.HTTP, DownloadProtocol.fromUrl("http://[2001:db8::1]/file"))
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://[::1]:8443/file"))
+    }
+
+    /**
+     * Tests fromUrl() handles URL with special characters.
+     */
+    @Test
+    fun `fromUrl detects protocol with URL encoded characters`() {
+        assertEquals(DownloadProtocol.HTTPS, DownloadProtocol.fromUrl("https://example.com/file%20name.zip"))
+        assertEquals(DownloadProtocol.FTP, DownloadProtocol.fromUrl("ftp://ftp.server.com/path%2Fto%2Ffile"))
+    }
+
+    /**
+     * Tests fromUrl() handles protocol at start of longer string.
+     */
+    @Test
+    fun `fromUrl only checks protocol prefix`() {
+        // Should detect based on prefix only
+        assertEquals(DownloadProtocol.HTTP, DownloadProtocol.fromUrl("http://example.com https://other.com"))
+        assertNull(DownloadProtocol.fromUrl("text before http://example.com"))
     }
 }
 

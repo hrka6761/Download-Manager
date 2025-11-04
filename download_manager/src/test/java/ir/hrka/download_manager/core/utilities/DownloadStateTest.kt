@@ -19,7 +19,7 @@ import org.junit.rules.TemporaryFolder
  * - Formatting utilities (bytes, speed, time)
  * - Enum validation (FileSystemErrorType, TimeoutType)
  *
- * **Total Tests:** 35
+ * **Total Tests:** 67
  *
  * @see DownloadState
  * @see DownloadProgress
@@ -874,5 +874,654 @@ class DownloadStateTest {
         assertTrue(types.contains(TimeoutType.CONNECT_TIMEOUT))
         assertTrue(types.contains(TimeoutType.READ_TIMEOUT))
         assertTrue(types.contains(TimeoutType.WRITE_TIMEOUT))
+    }
+
+    // ==================== Edge Cases & Boundary Tests ====================
+
+    /**
+     * Tests formatBytes() handles zero correctly.
+     */
+    @Test
+    fun `formatBytes handles zero bytes`() {
+        assertEquals("0 B", DownloadState.formatBytes(0))
+    }
+
+    /**
+     * Tests formatBytes() handles 1 byte.
+     */
+    @Test
+    fun `formatBytes handles single byte`() {
+        assertEquals("1 B", DownloadState.formatBytes(1))
+    }
+
+    /**
+     * Tests formatBytes() handles boundary at 1023 bytes (just before KB).
+     */
+    @Test
+    fun `formatBytes handles 1023 bytes boundary`() {
+        assertEquals("1023 B", DownloadState.formatBytes(1023))
+    }
+
+    /**
+     * Tests formatBytes() handles boundary at 1024 bytes (exactly 1 KB).
+     */
+    @Test
+    fun `formatBytes handles exactly 1 KB`() {
+        assertEquals("1.00 KB", DownloadState.formatBytes(1024))
+    }
+
+    /**
+     * Tests formatBytes() handles KB to MB boundary.
+     */
+    @Test
+    fun `formatBytes handles KB to MB boundary`() {
+        assertEquals("1023.00 KB", DownloadState.formatBytes(1023 * 1024))
+        assertEquals("1.00 MB", DownloadState.formatBytes(1024 * 1024))
+    }
+
+    /**
+     * Tests formatBytes() handles MB to GB boundary.
+     */
+    @Test
+    fun `formatBytes handles MB to GB boundary`() {
+        assertEquals("1023.00 MB", DownloadState.formatBytes(1023 * 1024 * 1024))
+        assertEquals("1.00 GB", DownloadState.formatBytes(1024L * 1024 * 1024))
+    }
+
+    /**
+     * Tests formatBytes() handles very large values.
+     */
+    @Test
+    fun `formatBytes handles very large file sizes`() {
+        val tenGB = 10L * 1024 * 1024 * 1024
+        assertEquals("10.00 GB", DownloadState.formatBytes(tenGB))
+        
+        val hundredGB = 100L * 1024 * 1024 * 1024
+        assertEquals("100.00 GB", DownloadState.formatBytes(hundredGB))
+    }
+
+    /**
+     * Tests progress percentage with zero downloaded (0%).
+     */
+    @Test
+    fun `DownloadProgress calculates 0 percent correctly`() {
+        val progress = DownloadProgress(0, 1000)
+        assertEquals(0f, progress.getPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests progress percentage with 100% complete.
+     */
+    @Test
+    fun `DownloadProgress calculates 100 percent correctly`() {
+        val progress = DownloadProgress(1000, 1000)
+        assertEquals(100f, progress.getPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests progress percentage with downloaded exceeding total (edge case).
+     */
+    @Test
+    fun `DownloadProgress handles downloaded exceeding total`() {
+        val progress = DownloadProgress(1500, 1000)
+        // Should return percentage > 100
+        assertEquals(150f, progress.getPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests remaining bytes when downloaded equals total.
+     */
+    @Test
+    fun `DownloadProgress getRemainingBytes returns 0 when complete`() {
+        val progress = DownloadProgress(1000, 1000)
+        assertEquals(0, progress.getRemainingBytes())
+    }
+
+    /**
+     * Tests remaining bytes when downloaded exceeds total.
+     */
+    @Test
+    fun `DownloadProgress getRemainingBytes coerces to 0 when downloaded exceeds total`() {
+        val progress = DownloadProgress(1500, 1000)
+        assertEquals(0, progress.getRemainingBytes())
+    }
+
+    /**
+     * Tests elapsed time with very short duration.
+     */
+    @Test
+    fun `DownloadProgress calculates elapsed time for short duration`() {
+        val startTime = System.currentTimeMillis() - 100
+        val progress = DownloadProgress(100, 1000, startTime)
+        
+        val elapsed = progress.getElapsedTime()
+        assertTrue(elapsed >= 90 && elapsed <= 110)
+    }
+
+    /**
+     * Tests elapsed time immediately after start.
+     */
+    @Test
+    fun `DownloadProgress elapsed time is near zero immediately after start`() {
+        val progress = DownloadProgress(0, 1000) // Uses current time as default
+        val elapsed = progress.getElapsedTime()
+        assertTrue(elapsed < 50) // Should be very small
+    }
+
+    /**
+     * Tests DownloadSpeed with zero speed values.
+     */
+    @Test
+    fun `DownloadSpeed formats zero speed correctly`() {
+        val speed = DownloadSpeed(0, 0, -1)
+        
+        assertEquals("0 B/s", speed.getCurrentSpeedFormatted())
+        assertEquals("0 B/s", speed.getAverageSpeedFormatted())
+    }
+
+    /**
+     * Tests DownloadSpeed with very high speed.
+     */
+    @Test
+    fun `DownloadSpeed formats very high speed correctly`() {
+        val hundredMBps = 100L * 1024 * 1024 // 100 MB/s
+        val speed = DownloadSpeed(hundredMBps, hundredMBps, 1000)
+        
+        assertEquals("100.00 MB/s", speed.getCurrentSpeedFormatted())
+    }
+
+    /**
+     * Tests DownloadSpeed ETA formatting with zero time.
+     */
+    @Test
+    fun `DownloadSpeed getEstimatedTimeFormatted handles 0 seconds`() {
+        val speed = DownloadSpeed(1024, 512, 0)
+        assertEquals("0 sec", speed.getEstimatedTimeFormatted())
+    }
+
+    /**
+     * Tests DownloadSpeed ETA formatting at 59 seconds boundary.
+     */
+    @Test
+    fun `DownloadSpeed getEstimatedTimeFormatted at 59 seconds boundary`() {
+        val speed = DownloadSpeed(1024, 512, 59000)
+        assertEquals("59 sec", speed.getEstimatedTimeFormatted())
+    }
+
+    /**
+     * Tests DownloadSpeed ETA formatting at 60 seconds boundary (1 minute).
+     */
+    @Test
+    fun `DownloadSpeed getEstimatedTimeFormatted at 60 seconds boundary`() {
+        val speed = DownloadSpeed(1024, 512, 60000)
+        assertEquals("1 min 0 sec", speed.getEstimatedTimeFormatted())
+    }
+
+    /**
+     * Tests DownloadSpeed ETA formatting at 3600 seconds boundary (1 hour).
+     */
+    @Test
+    fun `DownloadSpeed getEstimatedTimeFormatted at 3600 seconds boundary`() {
+        val speed = DownloadSpeed(1024, 512, 3600000)
+        assertEquals("1 hr 0 min", speed.getEstimatedTimeFormatted())
+    }
+
+    /**
+     * Tests isStalled() at exact threshold (100 bytes/sec).
+     */
+    @Test
+    fun `DownloadSpeed isStalled at exact threshold boundary`() {
+        val atThreshold = DownloadSpeed(100, 100, 1000)
+        assertFalse(atThreshold.isStalled()) // >= 100 is not stalled
+        
+        val belowThreshold = DownloadSpeed(99, 100, 1000)
+        assertTrue(belowThreshold.isStalled()) // < 100 is stalled
+    }
+
+    /**
+     * Tests isStalled() with zero speed.
+     */
+    @Test
+    fun `DownloadSpeed isStalled returns true for zero speed`() {
+        val speed = DownloadSpeed(0, 0, -1)
+        assertTrue(speed.isStalled())
+    }
+
+    /**
+     * Tests Downloading state with zero progress.
+     */
+    @Test
+    fun `Downloading state handles zero progress`() {
+        val progress = DownloadProgress(0, 1000)
+        val speed = DownloadSpeed(0, 0, -1)
+        val state = DownloadState.Downloading("test-id", progress, speed)
+        
+        assertEquals(0f, state.getProgressPercentage(), 0.01f)
+        assertFalse(state.isAlmostComplete())
+    }
+
+    /**
+     * Tests Downloading state at 100% progress.
+     */
+    @Test
+    fun `Downloading state handles 100 percent progress`() {
+        val progress = DownloadProgress(1000, 1000)
+        val speed = DownloadSpeed(1024, 512, 0)
+        val state = DownloadState.Downloading("test-id", progress, speed)
+        
+        assertEquals(100f, state.getProgressPercentage(), 0.01f)
+        assertTrue(state.isAlmostComplete())
+    }
+
+    /**
+     * Tests isAlmostComplete() at exact 99.0% boundary.
+     */
+    @Test
+    fun `Downloading state isAlmostComplete at exact 99 percent boundary`() {
+        // Exactly 99%
+        val exactProgress = DownloadProgress(99, 100)
+        val speed = DownloadSpeed(1024, 512, 100)
+        val exactState = DownloadState.Downloading("test-id", exactProgress, speed)
+        assertTrue(exactState.isAlmostComplete())
+        
+        // Just below 99%
+        val belowProgress = DownloadProgress(98, 100)
+        val belowState = DownloadState.Downloading("test-id", belowProgress, speed)
+        assertFalse(belowState.isAlmostComplete())
+    }
+
+    /**
+     * Tests Paused state with immediate pause (pausedAt = now).
+     */
+    @Test
+    fun `Paused state with immediate pause has near-zero duration`() {
+        val progress = DownloadProgress(500, 1000)
+        val state = DownloadState.Paused("test-id", progress) // Uses current time
+        
+        val duration = state.getPausedDuration()
+        assertTrue(duration < 50) // Should be very small
+    }
+
+    /**
+     * Tests Failed state isFinalAttempt() when attempt exceeds max.
+     */
+    @Test
+    fun `Failed state isFinalAttempt returns true when exceeding max retries`() {
+        val error = DownloadError.NetworkError("Connection failed")
+        val state = DownloadState.Failed(
+            downloadId = "test-id",
+            error = error,
+            attemptNumber = 10
+        )
+        
+        assertTrue(state.isFinalAttempt(5)) // 10 >= 5
+    }
+
+    /**
+     * Tests Cancelled state with null partial file.
+     */
+    @Test
+    fun `Cancelled state handles null partial file`() {
+        val state = DownloadState.Cancelled(
+            downloadId = "test-id",
+            partialFile = null,
+            downloadedBytes = 0
+        )
+        
+        assertNull(state.partialFile)
+        assertEquals(0, state.downloadedBytes)
+    }
+
+    /**
+     * Tests Completed state with zero duration (instant download).
+     */
+    @Test
+    fun `Completed state handles zero duration`() {
+        val file = tempFolder.newFile("instant.zip")
+        val state = DownloadState.Completed(
+            downloadId = "test-id",
+            file = file,
+            totalBytes = 1000,
+            downloadDuration = 0,
+            averageSpeed = 0
+        )
+        
+        assertEquals(0, state.downloadDuration)
+        assertEquals("0 B/s", state.getFormattedSpeed())
+    }
+
+    /**
+     * Tests Completed state with very high average speed.
+     */
+    @Test
+    fun `Completed state handles very high speeds`() {
+        val file = tempFolder.newFile("fast.zip")
+        val gigabytePerSec = 1024L * 1024 * 1024
+        val state = DownloadState.Completed(
+            downloadId = "test-id",
+            file = file,
+            totalBytes = gigabytePerSec * 10,
+            downloadDuration = 10000,
+            averageSpeed = gigabytePerSec
+        )
+        
+        assertEquals("1.00 GB/s", state.getFormattedSpeed())
+    }
+
+    /**
+     * Tests NetworkError with non-null cause.
+     */
+    @Test
+    fun `NetworkError stores cause exception`() {
+        val cause = IOException("Network unreachable")
+        val error = DownloadError.NetworkError(
+            message = "Download failed",
+            cause = cause,
+            errorCode = "NETWORK_ERROR"
+        )
+        
+        assertEquals("Download failed", error.message)
+        assertEquals(cause, error.cause)
+        assertEquals("NETWORK_ERROR", error.errorCode)
+    }
+
+    /**
+     * Tests HttpError with various status codes.
+     */
+    @Test
+    fun `HttpError handles various HTTP status codes`() {
+        val error400 = DownloadError.HttpError(400, "Bad Request")
+        assertEquals("HTTP 400: Bad Request", error400.message)
+        
+        val error500 = DownloadError.HttpError(500, "Internal Server Error")
+        assertEquals("HTTP 500: Internal Server Error", error500.message)
+        
+        val error503 = DownloadError.HttpError(503, "Service Unavailable")
+        assertEquals("HTTP 503: Service Unavailable", error503.message)
+    }
+
+    /**
+     * Tests all FileSystemErrorType values individually.
+     */
+    @Test
+    fun `FileSystemError handles all error types`() {
+        val errors = listOf(
+            DownloadError.FileSystemError("Disk full", errorType = FileSystemErrorType.DISK_FULL),
+            DownloadError.FileSystemError("Permission denied", errorType = FileSystemErrorType.PERMISSION_DENIED),
+            DownloadError.FileSystemError("File not found", errorType = FileSystemErrorType.FILE_NOT_FOUND),
+            DownloadError.FileSystemError("Directory not found", errorType = FileSystemErrorType.DIRECTORY_NOT_FOUND),
+            DownloadError.FileSystemError("File exists", errorType = FileSystemErrorType.FILE_ALREADY_EXISTS),
+            DownloadError.FileSystemError("Invalid path", errorType = FileSystemErrorType.INVALID_PATH),
+            DownloadError.FileSystemError("IO error", errorType = FileSystemErrorType.IO_ERROR)
+        )
+        
+        assertEquals(7, errors.size)
+        errors.forEach { error ->
+            assertNotNull(error.message)
+            assertNotNull(error.errorType)
+        }
+    }
+
+    /**
+     * Tests all TimeoutType values individually.
+     */
+    @Test
+    fun `TimeoutError handles all timeout types`() {
+        val connectTimeout = DownloadError.TimeoutError("Connect timeout", timeoutType = TimeoutType.CONNECT_TIMEOUT)
+        assertEquals(TimeoutType.CONNECT_TIMEOUT, connectTimeout.timeoutType)
+        
+        val readTimeout = DownloadError.TimeoutError("Read timeout", timeoutType = TimeoutType.READ_TIMEOUT)
+        assertEquals(TimeoutType.READ_TIMEOUT, readTimeout.timeoutType)
+        
+        val writeTimeout = DownloadError.TimeoutError("Write timeout", timeoutType = TimeoutType.WRITE_TIMEOUT)
+        assertEquals(TimeoutType.WRITE_TIMEOUT, writeTimeout.timeoutType)
+    }
+
+    /**
+     * Tests AuthenticationError with 403 Forbidden.
+     */
+    @Test
+    fun `AuthenticationError handles 403 Forbidden`() {
+        val error = DownloadError.AuthenticationError(
+            message = "Forbidden",
+            statusCode = 403
+        )
+        
+        assertEquals("Forbidden", error.message)
+        assertEquals(403, error.statusCode)
+    }
+
+    /**
+     * Tests UnknownError with cause.
+     */
+    @Test
+    fun `UnknownError stores cause exception`() {
+        val cause = RuntimeException("Unexpected error")
+        val error = DownloadError.UnknownError(
+            message = "Unknown error",
+            cause = cause
+        )
+        
+        assertEquals("Unknown error", error.message)
+        assertEquals(cause, error.cause)
+    }
+
+    /**
+     * Tests DownloadProgress getRemainingBytes() with zero total (unknown).
+     */
+    @Test
+    fun `DownloadProgress getRemainingBytes handles zero total gracefully`() {
+        val progress = DownloadProgress(500, 0)
+        // When total is 0, should coerce to 0
+        assertEquals(0, progress.getRemainingBytes())
+    }
+
+    /**
+     * Tests isTotalSizeKnown() with zero total.
+     */
+    @Test
+    fun `DownloadProgress isTotalSizeKnown returns false for zero`() {
+        val progress = DownloadProgress(100, 0)
+        assertFalse(progress.isTotalSizeKnown())
+    }
+
+    /**
+     * Tests getPercentage() with zero total.
+     */
+    @Test
+    fun `DownloadProgress getPercentage returns -1 for zero total`() {
+        val progress = DownloadProgress(100, 0)
+        assertEquals(-1f, progress.getPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests Downloading state getProgressPercentage() with very small values.
+     */
+    @Test
+    fun `Downloading state handles small byte values`() {
+        val progress = DownloadProgress(1, 100)
+        val speed = DownloadSpeed(1, 1, 99000)
+        val state = DownloadState.Downloading("test-id", progress, speed)
+        
+        assertEquals(1f, state.getProgressPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests Downloading state getProgressPercentage() with large values.
+     */
+    @Test
+    fun `Downloading state handles large byte values`() {
+        val fiveGB = 5L * 1024 * 1024 * 1024
+        val tenGB = 10L * 1024 * 1024 * 1024
+        val progress = DownloadProgress(fiveGB, tenGB)
+        val speed = DownloadSpeed(10 * 1024 * 1024, 10 * 1024 * 1024, 500000)
+        val state = DownloadState.Downloading("test-id", progress, speed)
+        
+        assertEquals(50f, state.getProgressPercentage(), 0.01f)
+    }
+
+    /**
+     * Tests State equality for same state types.
+     */
+    @Test
+    fun `State equality works correctly`() {
+        val idle1 = DownloadState.Idle("test-id")
+        val idle2 = DownloadState.Idle("test-id")
+        val idle3 = DownloadState.Idle("different-id")
+        
+        assertEquals(idle1, idle2)
+        assertNotEquals(idle1, idle3)
+    }
+
+    /**
+     * Tests Validating state with empty validationStage.
+     */
+    @Test
+    fun `Validating state handles empty validation stage`() {
+        val state = DownloadState.Validating("test-id", "")
+        
+        assertEquals("test-id", state.downloadId)
+        assertEquals("", state.validationStage)
+    }
+
+    /**
+     * Tests Validating state with very long validation stage message.
+     */
+    @Test
+    fun `Validating state handles long validation stage message`() {
+        val longMessage = "Validating ".repeat(100)
+        val state = DownloadState.Validating("test-id", longMessage)
+        
+        assertEquals(longMessage, state.validationStage)
+    }
+
+    /**
+     * Tests Connecting state with attempt number 1 (default).
+     */
+    @Test
+    fun `Connecting state uses default attempt number 1`() {
+        val state = DownloadState.Connecting(
+            downloadId = "test-id",
+            url = "https://example.com/file"
+        )
+        
+        assertEquals(1, state.attemptNumber)
+    }
+
+    /**
+     * Tests Connecting state with very high attempt number.
+     */
+    @Test
+    fun `Connecting state handles high attempt number`() {
+        val state = DownloadState.Connecting(
+            downloadId = "test-id",
+            url = "https://example.com/file",
+            attemptNumber = 100
+        )
+        
+        assertEquals(100, state.attemptNumber)
+    }
+
+    /**
+     * Tests Completed state with unverified checksum (default).
+     */
+    @Test
+    fun `Completed state defaults verified to false`() {
+        val file = tempFolder.newFile("test.zip")
+        val state = DownloadState.Completed(
+            downloadId = "test-id",
+            file = file,
+            totalBytes = 1000,
+            downloadDuration = 5000,
+            averageSpeed = 200
+        )
+        
+        assertFalse(state.verified)
+    }
+
+    /**
+     * Tests Completed state with verified checksum.
+     */
+    @Test
+    fun `Completed state handles verified checksum`() {
+        val file = tempFolder.newFile("verified.zip")
+        val state = DownloadState.Completed(
+            downloadId = "test-id",
+            file = file,
+            totalBytes = 1000,
+            downloadDuration = 5000,
+            averageSpeed = 200,
+            verified = true
+        )
+        
+        assertTrue(state.verified)
+    }
+
+    /**
+     * Tests Failed state with canRetry false (default is true).
+     */
+    @Test
+    fun `Failed state handles canRetry false`() {
+        val error = DownloadError.NetworkError("Fatal error")
+        val state = DownloadState.Failed(
+            downloadId = "test-id",
+            error = error,
+            canRetry = false
+        )
+        
+        assertFalse(state.canRetry)
+    }
+
+    /**
+     * Tests Failed state with default attempt number (1).
+     */
+    @Test
+    fun `Failed state uses default attempt number 1`() {
+        val error = DownloadError.NetworkError("Connection failed")
+        val state = DownloadState.Failed(
+            downloadId = "test-id",
+            error = error
+        )
+        
+        assertEquals(1, state.attemptNumber)
+    }
+
+    /**
+     * Tests Paused state with default pausedAt (current time).
+     */
+    @Test
+    fun `Paused state uses current time as default pausedAt`() {
+        val progress = DownloadProgress(500, 1000)
+        val beforeCreation = System.currentTimeMillis()
+        val state = DownloadState.Paused("test-id", progress)
+        val afterCreation = System.currentTimeMillis()
+        
+        // pausedAt should be between before and after
+        assertTrue(state.pausedAt >= beforeCreation)
+        assertTrue(state.pausedAt <= afterCreation)
+    }
+
+    /**
+     * Tests DownloadProgress with very large file size (TB range).
+     */
+    @Test
+    fun `DownloadProgress handles terabyte-sized files`() {
+        val oneTB = 1024L * 1024 * 1024 * 1024
+        val progress = DownloadProgress(oneTB / 2, oneTB)
+        
+        assertEquals(50f, progress.getPercentage(), 0.01f)
+        assertEquals(oneTB / 2, progress.getRemainingBytes())
+    }
+
+    /**
+     * Tests DownloadSpeed getEstimatedTimeFormatted() with negative value.
+     */
+    @Test
+    fun `DownloadSpeed getEstimatedTimeFormatted handles negative time correctly`() {
+        val speed = DownloadSpeed(1024, 512, -1)
+        assertEquals("Unknown", speed.getEstimatedTimeFormatted())
+        
+        val speed2 = DownloadSpeed(1024, 512, -1000)
+        assertEquals("Unknown", speed2.getEstimatedTimeFormatted())
     }
 }

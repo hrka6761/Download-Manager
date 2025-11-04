@@ -542,7 +542,6 @@ class OkHttpDownloader(
         return Result.success(Unit)
     }
 
-    // ==================== Private Helper Methods ====================
 
     /**
      * Creates default OkHttpClient with sensible defaults.

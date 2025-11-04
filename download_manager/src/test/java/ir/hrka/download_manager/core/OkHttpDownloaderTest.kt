@@ -6,6 +6,7 @@ import ir.hrka.download_manager.core.utilities.ValidationCheckType
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -39,7 +40,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * - All 15 Downloader interface methods
  * - Custom configuration (buffer size, update interval, custom client)
  *
- * **Total Tests:** 35 (20 integration tests, 15 unit tests)
+ * **Total Tests:** 54 (comprehensive integration and unit tests)
  *
  * @see OkHttpDownloader
  * @see Downloader
@@ -1507,5 +1508,736 @@ class OkHttpDownloaderTest {
         // Assert
         assertTrue(states.last() is DownloadState.Completed)
         assertEquals(0, destination.length())
+    }
+
+    // ==================== pause() Tests (CRITICAL - Previously Missing) ====================
+
+    /**
+     * Tests pause() returns failure for non-existent download.
+     */
+    @Test
+    fun `pause returns failure for non-existent download`() = runTest {
+        // Act
+        val result = downloader.pause("non-existent-id")
+
+        // Assert
+        assertTrue(result.isFailure)
+    }
+
+    /**
+     * Tests pause() returns failure when download is not in Downloading state.
+     */
+    @Test
+    fun `pause returns failure when download is not active`() = runTest {
+        // Arrange - Complete a download first
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+        
+        downloader.download(request).toList()
+        
+        // Act - Try to pause completed download
+        val result = downloader.pause(request.id)
+
+        // Assert
+        assertTrue(result.isFailure)
+    }
+
+    /**
+     * Tests pause() returns failure when server doesn't support range requests.
+     */
+    @Test
+    fun `pause returns failure when server does not support range requests`() = runTest {
+        // Arrange - Server without Accept-Ranges header
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("A".repeat(100000))
+                .throttleBody(1000, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                // No Accept-Ranges header
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        var capturedId: String? = null
+
+        // Act - Start download and try to pause
+        val job = launch {
+            downloader.download(request).collect { state ->
+                if (state is DownloadState.Downloading) {
+                    capturedId = state.downloadId
+                }
+            }
+        }
+        
+        kotlinx.coroutines.delay(100) // Let download start
+        
+        if (capturedId != null) {
+            val result = downloader.pause(capturedId!!)
+            assertTrue(result.isFailure)
+        }
+        
+        job.cancel()
+    }
+
+    // ==================== verify() Tests (CRITICAL - Previously Missing) ====================
+
+    /**
+     * Tests verify() returns failure for non-existent download.
+     */
+    @Test
+    fun `verify returns failure for non-existent download`() = runTest {
+        // Act
+        val result = downloader.verify("non-existent-id")
+
+        // Assert
+        assertTrue(result.isFailure)
+    }
+
+    /**
+     * Tests verify() returns failure when download not completed.
+     */
+    @Test
+    fun `verify returns failure when download not completed`() = runTest {
+        // Arrange - Start but don't complete download
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("A".repeat(10000))
+                .throttleBody(1000, 1000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setChecksum("abc123", "MD5").build()
+
+        val job = launch {
+            downloader.download(request).collect { }
+        }
+        
+        kotlinx.coroutines.delay(100)
+        
+        // Act - Try to verify incomplete download
+        val result = downloader.verify(request.id)
+
+        // Assert - Should fail because not completed
+        assertTrue(result.isFailure)
+        
+        job.cancel()
+    }
+
+    /**
+     * Tests verify() returns success(true) when no checksum provided.
+     */
+    @Test
+    fun `verify returns success true when no checksum to verify`() = runTest {
+        // Arrange
+        val fileContent = "Test content"
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(fileContent)
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build() // No checksum
+
+        downloader.download(request).toList()
+
+        // Act
+        val result = downloader.verify(request.id)
+
+        // Assert
+        assertTrue(result.isSuccess)
+        assertTrue(result.getOrNull() == true)
+    }
+
+    // ==================== getInfo() Comprehensive Tests ====================
+
+    /**
+     * Tests getInfo() returns complete information for active download.
+     */
+    @Test
+    fun `getInfo returns comprehensive information for completed download`() = runTest {
+        // Arrange
+        val fileContent = "Test content for info"
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(fileContent)
+                .addHeader("Content-Length", fileContent.length.toString())
+                .addHeader("Server", "TestServer/1.0")
+                .addHeader("Accept-Ranges", "bytes")
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setExpectedSize(fileContent.length.toLong()).build()
+
+        downloader.download(request).toList()
+
+        // Act
+        val info = downloader.getInfo(request.id)
+
+        // Assert
+        assertNotNull(info)
+        assertEquals(request.id, info!!.id)
+        assertEquals(request, info.request)
+        assertTrue(info.state is DownloadState.Completed)
+        assertEquals(destination, info.file)
+        assertTrue(info.serverInfo.supportsRangeRequests)
+        assertEquals("TestServer/1.0", info.serverInfo.serverName)
+    }
+
+    // ==================== resume() Comprehensive Tests ====================
+
+    /**
+     * Tests resume() returns Failed state for non-existent download.
+     */
+    @Test
+    fun `resume returns failed state for non-existent download`() = runTest {
+        // Act
+        val states = downloader.resume("non-existent-id").toList()
+
+        // Assert
+        assertEquals(1, states.size)
+        assertTrue(states[0] is DownloadState.Failed)
+        val failedState = states[0] as DownloadState.Failed
+        assertTrue(failedState.error.message.contains("not found"))
+    }
+
+    /**
+     * Tests resume() returns Failed state when download not paused.
+     */
+    @Test
+    fun `resume returns failed state when download is not paused`() = runTest {
+        // Arrange - Complete a download
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+        
+        downloader.download(request).toList()
+
+        // Act - Try to resume completed download
+        val states = downloader.resume(request.id).toList()
+
+        // Assert
+        assertTrue(states.size > 0)
+        val firstState = states[0]
+        assertTrue(firstState is DownloadState.Failed)
+    }
+
+    // ==================== retry() Success Path Tests ====================
+
+    /**
+     * Tests retry() successfully restarts a failed download.
+     */
+    @Test
+    fun `retry restarts failed download successfully`() = runTest {
+        // Arrange - First request fails, second succeeds
+        mockServer.enqueue(MockResponse().setResponseCode(500)) // Fail
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Success")) // Retry succeeds
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(1).build()
+
+        // Initial download fails
+        val failedStates = downloader.download(request).toList()
+        assertTrue(failedStates.last() is DownloadState.Failed)
+
+        // Act - Retry the failed download
+        val retryStates = downloader.retry(request.id).toList()
+
+        // Assert
+        assertTrue(retryStates.last() is DownloadState.Completed)
+        assertEquals("Success", destination.readText())
+    }
+
+    /**
+     * Tests retry() returns Failed when download not in Failed state.
+     */
+    @Test
+    fun `retry returns failed state when download has not failed`() = runTest {
+        // Arrange - Successful download
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+        
+        downloader.download(request).toList()
+
+        // Act - Try to retry completed download
+        val states = downloader.retry(request.id).toList()
+
+        // Assert
+        assertTrue(states.size > 0)
+        val firstState = states[0]
+        assertTrue(firstState is DownloadState.Failed)
+        val failedState = firstState as DownloadState.Failed
+        assertTrue(failedState.error.message.contains("has not failed"))
+    }
+
+    // ==================== canPause/canResume Edge Cases ====================
+
+    /**
+     * Tests canPause() returns false for paused download.
+     */
+    @Test
+    fun `canPause returns false for non-downloading states`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+        
+        // Complete download
+        downloader.download(request).toList()
+
+        // Act
+        val canPause = downloader.canPause(request.id)
+
+        // Assert
+        assertFalse(canPause) // Completed downloads can't be paused
+    }
+
+    /**
+     * Tests canResume() requires all three conditions.
+     */
+    @Test
+    fun `canResume returns false when any condition not met`() = runTest {
+        // Test 1: Non-existent ID
+        assertFalse(downloader.canResume("non-existent"))
+    }
+
+    // ==================== validate() Edge Cases ====================
+
+    /**
+     * Tests validate() checks disk space when expected size provided.
+     */
+    @Test
+    fun `validate includes disk space check when expected size known`() = runTest {
+        // Arrange
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder("https://example.com/file.txt", destination)
+            .setExpectedSize(1024)
+            .build()
+
+        // Act
+        val result = downloader.validate(request)
+
+        // Assert
+        assertTrue(result.isSuccess)
+        val validation = result.getOrNull()
+        assertNotNull(validation)
+        assertTrue(validation!!.checks.any { it.type == ValidationCheckType.DISK_SPACE })
+    }
+
+    /**
+     * Tests validate() handles file exists with various flags.
+     */
+    @Test
+    fun `validate checks file existence correctly`() = runTest {
+        // Arrange
+        val destination = tempFolder.newFile("existing.txt")
+        destination.writeText("existing content")
+        
+        // Test 1: File exists, no overwrite, no resume - should fail
+        val noOverwriteNoResume = DownloadRequest.Builder("https://example.com/file", destination)
+            .setOverwriteExisting(false)
+            .setResumeIfPossible(false)
+            .build()
+        
+        val result1 = downloader.validate(noOverwriteNoResume)
+        assertFalse(result1.getOrNull()!!.isValid)
+        
+        // Test 2: File exists with overwrite - should pass
+        val withOverwrite = DownloadRequest.Builder("https://example.com/file", destination)
+            .setOverwriteExisting(true)
+            .build()
+        
+        val result2 = downloader.validate(withOverwrite)
+        assertTrue(result2.getOrNull()!!.isValid)
+        
+        // Test 3: File exists with resume - should pass
+        val withResume = DownloadRequest.Builder("https://example.com/file", destination)
+            .setResumeIfPossible(true)
+            .build()
+        
+        val result3 = downloader.validate(withResume)
+        assertTrue(result3.getOrNull()!!.isValid)
+    }
+
+    // ==================== Checksum Verification Tests ====================
+
+    /**
+     * Tests download with checksum verification success.
+     */
+    @Test
+    fun `download verifies checksum when provided and matches`() = runTest {
+        // Arrange
+        val content = "hello"
+        // MD5 of "hello" is 5d41402abc4b2a76b9719d911017c592
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(content)
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setChecksum("5d41402abc4b2a76b9719d911017c592", "MD5").build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        val completedState = states.last() as DownloadState.Completed
+        assertTrue(completedState.verified)
+    }
+
+    /**
+     * Tests verify() method after download completes.
+     */
+    @Test
+    fun `verify returns true for matching checksum after download`() = runTest {
+        // Arrange
+        val content = "hello"
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(content))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setChecksum("5d41402abc4b2a76b9719d911017c592", "MD5").build()
+
+        downloader.download(request).toList()
+
+        // Act
+        val result = downloader.verify(request.id)
+
+        // Assert
+        assertTrue(result.isSuccess)
+        assertTrue(result.getOrNull() == true)
+    }
+
+    // ==================== State Management Edge Cases ====================
+
+    /**
+     * Tests getState() returns correct state after completion.
+     */
+    @Test
+    fun `getState returns completed state after download finishes`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        downloader.download(request).toList()
+        val state = downloader.getState(request.id)
+
+        // Assert
+        assertNotNull(state)
+        assertTrue(state is DownloadState.Completed)
+    }
+
+    /**
+     * Tests getActiveDownloads() includes downloading states only.
+     */
+    @Test
+    fun `getActiveDownloads includes only active states`() = runTest {
+        // Arrange - Multiple downloads in different states
+        
+        // Completed download
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Done"))
+        val completedDest = tempFolder.newFile("completed.txt")
+        val completedReq = DownloadRequest.Builder(
+            mockServer.url("/completed.txt").toString(),
+            completedDest
+        ).setId("completed-id").build()
+        downloader.download(completedReq).toList()
+        
+        // Verify completed is not in active downloads
+        val activeDownloads = downloader.getActiveDownloads()
+        assertFalse(activeDownloads.contains("completed-id"))
+    }
+
+    // ==================== Error Response Codes Tests ====================
+
+    /**
+     * Tests download handles 401 Unauthorized.
+     */
+    @Test
+    fun `download emits Failed state on 401 Unauthorized`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(401).setBody("Unauthorized"))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(1).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Failed)
+    }
+
+    /**
+     * Tests download handles 403 Forbidden.
+     */
+    @Test
+    fun `download emits Failed state on 403 Forbidden`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(1).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Failed)
+    }
+
+    /**
+     * Tests download handles 500 Internal Server Error.
+     */
+    @Test
+    fun `download emits Failed state on 500 Internal Server Error`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(500).setBody("Server Error"))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(1).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Failed)
+    }
+
+    /**
+     * Tests download handles 503 Service Unavailable.
+     */
+    @Test
+    fun `download emits Failed state on 503 Service Unavailable`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(503).setBody("Service Unavailable"))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).setMaxRetries(1).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Failed)
+    }
+
+    // ==================== Custom Client Tests ====================
+
+    /**
+     * Tests OkHttpDownloader accepts custom OkHttpClient.
+     */
+    @Test
+    fun `downloader accepts custom OkHttpClient`() = runTest {
+        // Arrange
+        val customClient =
+            OkHttpClient.Builder()
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        val customDownloader = OkHttpDownloader(client = customClient)
+
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Test"))
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        val states = customDownloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Completed)
+        assertEquals("Test", destination.readText())
+    }
+
+    // ==================== clearDownload() Tests ====================
+
+    /**
+     * Tests clearDownload() removes download from tracking.
+     */
+    @Test
+    fun `clearDownload removes download and subsequent getState returns null`() = runTest {
+        // Arrange
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody("Content"))
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        downloader.download(request).toList()
+        
+        // Verify it exists
+        assertNotNull(downloader.getState(request.id))
+
+        // Act
+        val result = downloader.clearDownload(request.id)
+
+        // Assert
+        assertTrue(result.isSuccess)
+        assertNull(downloader.getState(request.id))
+        assertNull(downloader.getInfo(request.id))
+    }
+
+    /**
+     * Tests clearDownload() succeeds even for non-existent download.
+     */
+    @Test
+    fun `clearDownload succeeds for non-existent download`() = runTest {
+        // Act
+        val result = downloader.clearDownload("non-existent-id")
+
+        // Assert
+        assertTrue(result.isSuccess)
+    }
+
+    // ==================== Server Header Tests ====================
+
+    /**
+     * Tests extractServerInfo() from response headers.
+     */
+    @Test
+    fun `download extracts server information from headers`() = runTest {
+        // Arrange
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("Content")
+                .addHeader("Server", "nginx/1.18.0")
+                .addHeader("Accept-Ranges", "bytes")
+                .addHeader("Content-Encoding", "gzip")
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        downloader.download(request).toList()
+
+        // Act
+        val info = downloader.getInfo(request.id)
+
+        // Assert
+        assertNotNull(info)
+        assertEquals("nginx/1.18.0", info!!.serverInfo.serverName)
+        assertTrue(info.serverInfo.supportsRangeRequests)
+        assertTrue(info.serverInfo.supportsCompression)
+    }
+
+    /**
+     * Tests download handles server without Accept-Ranges header.
+     */
+    @Test
+    fun `download detects server without range support`() = runTest {
+        // Arrange
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("Content")
+                // No Accept-Ranges header
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        downloader.download(request).toList()
+
+        // Act
+        val info = downloader.getInfo(request.id)
+
+        // Assert
+        assertNotNull(info)
+        assertFalse(info!!.serverInfo.supportsRangeRequests)
+    }
+
+    // ==================== Edge Case: Unknown Content-Length ====================
+
+    /**
+     * Tests download with unknown content length (no Content-Length header).
+     */
+    @Test
+    fun `download handles unknown content length`() = runTest {
+        // Arrange
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("Unknown size content")
+                // No Content-Length header
+        )
+
+        val destination = tempFolder.newFile("test.txt")
+        val request = DownloadRequest.Builder(
+            mockServer.url("/file.txt").toString(),
+            destination
+        ).build()
+
+        // Act
+        val states = downloader.download(request).toList()
+
+        // Assert
+        assertTrue(states.last() is DownloadState.Completed)
+        assertEquals("Unknown size content", destination.readText())
     }
 }

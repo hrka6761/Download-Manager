@@ -22,7 +22,7 @@ import org.junit.rules.TemporaryFolder
  * - DownloadValidation check filtering
  * - ValidationCheck severity and blocking detection
  *
- * **Total Tests:** 25
+ * **Total Tests:** 52
  *
  * @see DownloadInfo
  * @see DownloadMetadata
@@ -814,5 +814,875 @@ class DownloadInfoTest {
 
         assertTrue(warning.isWarning())
         assertFalse(error.isWarning())
+    }
+
+    // ==================== Additional Edge Cases & Comprehensive Tests ====================
+
+    /**
+     * Tests isActive() returns false for Idle state.
+     */
+    @Test
+    fun `isActive returns false for idle state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Idle("test-id")
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertFalse(info.isActive())
+    }
+
+    /**
+     * Tests isActive() returns false for Paused state.
+     */
+    @Test
+    fun `isActive returns false for paused state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Paused("test-id", DownloadProgress(500, 1000))
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertFalse(info.isActive())
+    }
+
+    /**
+     * Tests isActive() returns true for Validating state.
+     */
+    @Test
+    fun `isActive returns true for validating state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Validating("test-id", "Checking prerequisites")
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertTrue(info.isActive())
+    }
+
+    /**
+     * Tests isTerminal() returns true for Cancelled state.
+     */
+    @Test
+    fun `isTerminal returns true for cancelled state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Cancelled("test-id", file, 500)
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertTrue(info.isTerminal())
+    }
+
+    /**
+     * Tests isTerminal() returns false for non-terminal states.
+     */
+    @Test
+    fun `isTerminal returns false for downloading state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Downloading(
+            "test-id",
+            DownloadProgress(500, 1000),
+            DownloadSpeed(1024, 512, 5000)
+        )
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertFalse(info.isTerminal())
+    }
+
+    /**
+     * Tests canResume() with Failed state and all conditions met.
+     */
+    @Test
+    fun `canResume returns true for failed state with range support and existing file`() {
+        val file = tempFolder.newFile("test.zip")
+        file.writeText("partial content")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val error = DownloadError.NetworkError("Connection failed")
+        val state = DownloadState.Failed("test-id", error)
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo(supportsRangeRequests = true)
+        )
+
+        assertTrue(info.canResume())
+    }
+
+    /**
+     * Tests canResume() returns false when file doesn't exist.
+     */
+    @Test
+    fun `canResume returns false when partial file does not exist`() {
+        val file = tempFolder.newFile("test.zip")
+        file.delete() // File doesn't exist
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Paused("test-id", DownloadProgress(500, 1000))
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo(supportsRangeRequests = true)
+        )
+
+        assertFalse(info.canResume())
+    }
+
+    /**
+     * Tests canRetry() returns false when canRetry flag is false.
+     */
+    @Test
+    fun `canRetry returns false for failed state with canRetry false`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val error = DownloadError.NetworkError("Fatal error")
+        val state = DownloadState.Failed("test-id", error, canRetry = false)
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertFalse(info.canRetry())
+    }
+
+    /**
+     * Tests canRetry() returns false for non-Failed states.
+     */
+    @Test
+    fun `canRetry returns false for completed state`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Completed("test-id", file, 1000, 10000, 100)
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+
+        assertFalse(info.canRetry())
+    }
+
+    /**
+     * Tests DownloadMetadata with all null values.
+     */
+    @Test
+    fun `DownloadMetadata handles all null values`() {
+        val metadata = DownloadMetadata()
+        
+        assertNull(metadata.mimeType)
+        assertEquals(-1, metadata.contentLength)
+        assertNull(metadata.fileName)
+        assertNull(metadata.lastModified)
+        assertNull(metadata.etag)
+        assertNull(metadata.contentEncoding)
+        assertNull(metadata.contentDisposition)
+        assertTrue(metadata.customMetadata.isEmpty())
+    }
+
+    /**
+     * Tests DownloadMetadata with all values populated.
+     */
+    @Test
+    fun `DownloadMetadata stores all properties correctly`() {
+        val metadata = DownloadMetadata(
+            mimeType = "application/zip",
+            contentLength = 1024000,
+            fileName = "file.zip",
+            lastModified = 1234567890L,
+            etag = "abc123",
+            contentEncoding = "gzip",
+            contentDisposition = "attachment; filename=\"file.zip\"",
+            customMetadata = mapOf("key1" to "value1")
+        )
+        
+        assertEquals("application/zip", metadata.mimeType)
+        assertEquals(1024000, metadata.contentLength)
+        assertEquals("file.zip", metadata.fileName)
+        assertEquals(1234567890L, metadata.lastModified)
+        assertEquals("abc123", metadata.etag)
+        assertEquals("gzip", metadata.contentEncoding)
+        assertEquals("attachment; filename=\"file.zip\"", metadata.contentDisposition)
+        assertEquals(1, metadata.customMetadata.size)
+    }
+
+    /**
+     * Tests DownloadProgressInfo with default values.
+     */
+    @Test
+    fun `DownloadProgressInfo defaults to zero/unknown values`() {
+        val progress = DownloadProgressInfo()
+        
+        assertEquals(0, progress.bytesDownloaded)
+        assertEquals(-1, progress.totalBytes)
+        assertEquals(0f, progress.percentage, 0.01f)
+        assertEquals(0, progress.currentSpeed)
+        assertEquals(0, progress.averageSpeed)
+        assertEquals(-1, progress.estimatedTimeRemaining)
+        assertEquals(0, progress.chunksDownloaded)
+        assertEquals(-1, progress.totalChunks)
+    }
+
+    /**
+     * Tests DownloadProgressInfo getRemainingBytes() with unknown size.
+     */
+    @Test
+    fun `DownloadProgressInfo getRemainingBytes returns -1 for unknown size`() {
+        val progress = DownloadProgressInfo(bytesDownloaded = 500, totalBytes = -1)
+        assertEquals(-1, progress.getRemainingBytes())
+    }
+
+    /**
+     * Tests DownloadProgressInfo getFormattedTimeRemaining() edge cases.
+     */
+    @Test
+    fun `DownloadProgressInfo getFormattedTimeRemaining handles edge values`() {
+        val unknown = DownloadProgressInfo(estimatedTimeRemaining = -1)
+        assertEquals("Unknown", unknown.getFormattedTimeRemaining())
+        
+        val zero = DownloadProgressInfo(estimatedTimeRemaining = 0)
+        assertEquals("0 sec", zero.getFormattedTimeRemaining())
+        
+        val largeTime = DownloadProgressInfo(estimatedTimeRemaining = 7200000) // 2 hours
+        assertEquals("2 hr 0 min", largeTime.getFormattedTimeRemaining())
+    }
+
+    /**
+     * Tests DownloadTiming with default values (only createdAt set).
+     */
+    @Test
+    fun `DownloadTiming defaults correctly`() {
+        val timing = DownloadTiming()
+        
+        assertNotNull(timing.createdAt)
+        assertNull(timing.startedAt)
+        assertNull(timing.completedAt)
+        assertEquals(0, timing.pausedDuration)
+        assertEquals(0, timing.retryCount)
+        assertNull(timing.lastRetryAt)
+    }
+
+    /**
+     * Tests DownloadTiming isInProgress() when never started.
+     */
+    @Test
+    fun `DownloadTiming isInProgress returns false when never started`() {
+        val timing = DownloadTiming()
+        assertFalse(timing.isInProgress())
+    }
+
+    /**
+     * Tests DownloadTiming getTotalElapsedTime() when not started uses createdAt.
+     */
+    @Test
+    fun `DownloadTiming getTotalElapsedTime uses createdAt when not started`() {
+        val createdAt = System.currentTimeMillis() - 10000
+        val timing = DownloadTiming(createdAt = createdAt)
+        
+        val elapsed = timing.getTotalElapsedTime()
+        assertTrue(elapsed >= 9900 && elapsed <= 10100)
+    }
+
+    /**
+     * Tests DownloadTiming getActiveDownloadTime() with paused duration.
+     */
+    @Test
+    fun `DownloadTiming getActiveDownloadTime correctly subtracts paused duration`() {
+        val startedAt = System.currentTimeMillis() - 20000
+        val completedAt = System.currentTimeMillis()
+        val timing = DownloadTiming(
+            startedAt = startedAt,
+            completedAt = completedAt,
+            pausedDuration = 5000
+        )
+        
+        val totalElapsed = timing.getTotalElapsedTime()
+        val activeTime = timing.getActiveDownloadTime()
+        
+        // Active time should be about 5 seconds less than total
+        assertTrue(activeTime < totalElapsed)
+        assertTrue(totalElapsed - activeTime >= 4900 && totalElapsed - activeTime <= 5100)
+    }
+
+    /**
+     * Tests DownloadTiming with multiple retries.
+     */
+    @Test
+    fun `DownloadTiming tracks retry count and last retry time`() {
+        val lastRetryTime = System.currentTimeMillis()
+        val timing = DownloadTiming(
+            retryCount = 5,
+            lastRetryAt = lastRetryTime
+        )
+        
+        assertEquals(5, timing.retryCount)
+        assertEquals(lastRetryTime, timing.lastRetryAt)
+    }
+
+    /**
+     * Tests ServerInfo with all properties set.
+     */
+    @Test
+    fun `ServerInfo stores all properties correctly`() {
+        val serverInfo = ServerInfo(
+            serverName = "Apache/2.4.41",
+            serverVersion = "2.4.41",
+            supportsRangeRequests = true,
+            supportsCompression = true,
+            maxConnectionsAllowed = 6,
+            requiresAuthentication = true,
+            redirectUrl = "https://redirect.example.com",
+            responseHeaders = mapOf("Content-Type" to "application/zip")
+        )
+        
+        assertEquals("Apache/2.4.41", serverInfo.serverName)
+        assertEquals("2.4.41", serverInfo.serverVersion)
+        assertTrue(serverInfo.supportsRangeRequests)
+        assertTrue(serverInfo.supportsCompression)
+        assertEquals(6, serverInfo.maxConnectionsAllowed)
+        assertTrue(serverInfo.requiresAuthentication)
+        assertEquals("https://redirect.example.com", serverInfo.redirectUrl)
+        assertEquals(1, serverInfo.responseHeaders.size)
+    }
+
+    /**
+     * Tests ServerInfo with default values (all false/null).
+     */
+    @Test
+    fun `ServerInfo defaults correctly`() {
+        val serverInfo = ServerInfo()
+        
+        assertNull(serverInfo.serverName)
+        assertNull(serverInfo.serverVersion)
+        assertFalse(serverInfo.supportsRangeRequests)
+        assertFalse(serverInfo.supportsCompression)
+        assertEquals(1, serverInfo.maxConnectionsAllowed)
+        assertFalse(serverInfo.requiresAuthentication)
+        assertNull(serverInfo.redirectUrl)
+        assertTrue(serverInfo.responseHeaders.isEmpty())
+    }
+
+    /**
+     * Tests ServerInfo supportsParallelDownloads() with various connection limits.
+     */
+    @Test
+    fun `ServerInfo supportsParallelDownloads with various limits`() {
+        val single = ServerInfo(maxConnectionsAllowed = 1)
+        assertFalse(single.supportsParallelDownloads())
+        
+        val dual = ServerInfo(maxConnectionsAllowed = 2)
+        assertTrue(dual.supportsParallelDownloads())
+        
+        val multi = ServerInfo(maxConnectionsAllowed = 8)
+        assertTrue(multi.supportsParallelDownloads())
+    }
+
+    /**
+     * Tests StateTransition getStateDuration() with null previous transition.
+     */
+    @Test
+    fun `StateTransition getStateDuration returns 0 for null previous`() {
+        val transition = StateTransition(
+            from = DownloadState.Idle("test"),
+            to = DownloadState.Connecting("test", "url"),
+            timestamp = 5000
+        )
+        
+        assertEquals(0, transition.getStateDuration(null))
+    }
+
+    /**
+     * Tests StateTransition with reason provided.
+     */
+    @Test
+    fun `StateTransition stores reason correctly`() {
+        val transition = StateTransition(
+            from = DownloadState.Downloading("test", DownloadProgress(500, 1000), DownloadSpeed(0, 0, 0)),
+            to = DownloadState.Failed("test", DownloadError.NetworkError("Error"), false),
+            timestamp = 1000,
+            reason = "Network connection lost"
+        )
+        
+        assertEquals("Network connection lost", transition.reason)
+    }
+
+    /**
+     * Tests StateTransition with null reason (default).
+     */
+    @Test
+    fun `StateTransition defaults reason to null`() {
+        val transition = StateTransition(
+            from = DownloadState.Idle("test"),
+            to = DownloadState.Validating("test", "Checking")
+        )
+        
+        assertNull(transition.reason)
+    }
+
+    /**
+     * Tests DownloadValidation with all checks passed.
+     */
+    @Test
+    fun `DownloadValidation with all passed checks isValid true`() {
+        val checks = listOf(
+            ValidationCheck(ValidationCheckType.URL_VALIDITY, true, "Valid"),
+            ValidationCheck(ValidationCheckType.DISK_SPACE, true, "Sufficient space"),
+            ValidationCheck(ValidationCheckType.NETWORK_AVAILABILITY, true, "Network available")
+        )
+        val validation = DownloadValidation(true, checks)
+        
+        assertTrue(validation.isValid)
+        assertEquals(0, validation.getFailedChecks().size)
+        assertEquals(3, validation.getPassedChecks().size)
+    }
+
+    /**
+     * Tests DownloadValidation with mixed severities.
+     */
+    @Test
+    fun `DownloadValidation handles mixed severity checks`() {
+        val checks = listOf(
+            ValidationCheck(ValidationCheckType.URL_VALIDITY, true, "Valid"),
+            ValidationCheck(ValidationCheckType.DISK_SPACE, false, "Low space", ValidationSeverity.WARNING),
+            ValidationCheck(ValidationCheckType.NETWORK_AVAILABILITY, true, "Network OK")
+        )
+        val validation = DownloadValidation(true, checks) // Valid because only WARNING failed
+        
+        assertTrue(validation.isValid)
+        assertEquals(1, validation.getFailedChecks().size)
+        assertEquals(2, validation.getPassedChecks().size)
+    }
+
+    /**
+     * Tests ValidationCheck with INFO severity.
+     */
+    @Test
+    fun `ValidationCheck handles INFO severity`() {
+        val info = ValidationCheck(
+            ValidationCheckType.URL_REACHABILITY,
+            true,
+            "Server is reachable",
+            ValidationSeverity.INFO
+        )
+        
+        assertFalse(info.isBlocking())
+        assertFalse(info.isWarning())
+        assertEquals(ValidationSeverity.INFO, info.severity)
+    }
+
+    /**
+     * Tests ValidationCheck isBlocking() with passed check.
+     */
+    @Test
+    fun `ValidationCheck isBlocking returns false for passed checks`() {
+        val passed = ValidationCheck(
+            ValidationCheckType.DISK_SPACE,
+            true,
+            "OK",
+            ValidationSeverity.ERROR
+        )
+        
+        assertFalse(passed.isBlocking())
+    }
+
+    /**
+     * Tests all 11 ValidationCheckType values exist.
+     */
+    @Test
+    fun `ValidationCheckType enum has all 11 values`() {
+        val types = ValidationCheckType.entries
+        
+        assertEquals(11, types.size)
+        assertTrue(types.contains(ValidationCheckType.URL_VALIDITY))
+        assertTrue(types.contains(ValidationCheckType.URL_REACHABILITY))
+        assertTrue(types.contains(ValidationCheckType.DISK_SPACE))
+        assertTrue(types.contains(ValidationCheckType.NETWORK_AVAILABILITY))
+        assertTrue(types.contains(ValidationCheckType.WIFI_REQUIREMENT))
+        assertTrue(types.contains(ValidationCheckType.METERED_CONNECTION))
+        assertTrue(types.contains(ValidationCheckType.DESTINATION_WRITABLE))
+        assertTrue(types.contains(ValidationCheckType.FILE_EXISTS))
+        assertTrue(types.contains(ValidationCheckType.AUTHENTICATION))
+        assertTrue(types.contains(ValidationCheckType.SERVER_SUPPORT))
+        assertTrue(types.contains(ValidationCheckType.FILE_SIZE))
+    }
+
+    /**
+     * Tests all 3 ValidationSeverity values exist.
+     */
+    @Test
+    fun `ValidationSeverity enum has all 3 values`() {
+        val severities = ValidationSeverity.entries
+        
+        assertEquals(3, severities.size)
+        assertTrue(severities.contains(ValidationSeverity.INFO))
+        assertTrue(severities.contains(ValidationSeverity.WARNING))
+        assertTrue(severities.contains(ValidationSeverity.ERROR))
+    }
+
+    /**
+     * Tests DownloadInfo with state history populated.
+     */
+    @Test
+    fun `DownloadInfo stores state history correctly`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Downloading(
+            "test-id",
+            DownloadProgress(500, 1000),
+            DownloadSpeed(1024, 512, 5000)
+        )
+        
+        val history = listOf(
+            StateTransition(DownloadState.Idle("test-id"), DownloadState.Validating("test-id", "Checking"), 1000),
+            StateTransition(DownloadState.Validating("test-id", "Checking"), DownloadState.Connecting("test-id", "url"), 2000)
+        )
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo(),
+            history = history
+        )
+        
+        assertEquals(2, info.history.size)
+        assertEquals(history, info.history)
+    }
+
+    /**
+     * Tests DownloadInfo with empty state history (default).
+     */
+    @Test
+    fun `DownloadInfo defaults history to empty list`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Idle("test-id")
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo()
+        )
+        
+        assertTrue(info.history.isEmpty())
+    }
+
+    /**
+     * Tests DownloadProgressInfo with chunking information.
+     */
+    @Test
+    fun `DownloadProgressInfo tracks chunk progress`() {
+        val progress = DownloadProgressInfo(
+            bytesDownloaded = 5000000,
+            totalBytes = 10000000,
+            chunksDownloaded = 3,
+            totalChunks = 6
+        )
+        
+        assertEquals(3, progress.chunksDownloaded)
+        assertEquals(6, progress.totalChunks)
+    }
+
+    /**
+     * Tests DownloadTiming getFormattedElapsedTime() for various durations.
+     */
+    @Test
+    fun `DownloadTiming getFormattedElapsedTime formats correctly for all ranges`() {
+        // Short duration
+        val short = DownloadTiming(startedAt = System.currentTimeMillis() - 30000)
+        val shortFormatted = short.getFormattedElapsedTime()
+        assertTrue(shortFormatted.contains("sec"))
+        
+        // Medium duration
+        val medium = DownloadTiming(startedAt = System.currentTimeMillis() - 120000)
+        val mediumFormatted = medium.getFormattedElapsedTime()
+        assertTrue(mediumFormatted.contains("min"))
+        
+        // Long duration
+        val long = DownloadTiming(startedAt = System.currentTimeMillis() - 7200000)
+        val longFormatted = long.getFormattedElapsedTime()
+        assertTrue(longFormatted.contains("hr"))
+    }
+
+    /**
+     * Tests canResume() returns false for wrong state types.
+     */
+    @Test
+    fun `canResume returns false for idle state`() {
+        val file = tempFolder.newFile("test.zip")
+        file.writeText("content")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        val state = DownloadState.Idle("test-id")
+
+        val info = DownloadInfo(
+            id = "test-id",
+            request = request,
+            state = state,
+            file = file,
+            metadata = DownloadMetadata(),
+            progress = DownloadProgressInfo(),
+            timing = DownloadTiming(),
+            serverInfo = ServerInfo(supportsRangeRequests = true)
+        )
+
+        assertFalse(info.canResume())
+    }
+
+    /**
+     * Tests DownloadMetadata getFormattedContentLength() for various sizes.
+     */
+    @Test
+    fun `DownloadMetadata getFormattedContentLength handles various sizes`() {
+        val small = DownloadMetadata(contentLength = 512)
+        assertEquals("512 B", small.getFormattedContentLength())
+        
+        val medium = DownloadMetadata(contentLength = 5 * 1024 * 1024)
+        assertEquals("5.00 MB", medium.getFormattedContentLength())
+        
+        val large = DownloadMetadata(contentLength = 2L * 1024 * 1024 * 1024)
+        assertEquals("2.00 GB", large.getFormattedContentLength())
+    }
+
+    /**
+     * Tests DownloadProgressInfo isSizeKnown() with zero (edge case).
+     */
+    @Test
+    fun `DownloadProgressInfo isSizeKnown returns false for zero total`() {
+        val progress = DownloadProgressInfo(totalBytes = 0)
+        assertFalse(progress.isSizeKnown())
+    }
+
+    /**
+     * Tests ValidationCheck default severity is ERROR.
+     */
+    @Test
+    fun `ValidationCheck defaults severity to ERROR`() {
+        val check = ValidationCheck(
+            ValidationCheckType.URL_VALIDITY,
+            true,
+            "Valid URL"
+        )
+        
+        assertEquals(ValidationSeverity.ERROR, check.severity)
+    }
+
+    /**
+     * Tests DownloadValidation hasFailedCheck() for multiple check types.
+     */
+    @Test
+    fun `DownloadValidation hasFailedCheck works with multiple failures`() {
+        val checks = listOf(
+            ValidationCheck(ValidationCheckType.URL_VALIDITY, false, "Invalid URL"),
+            ValidationCheck(ValidationCheckType.DISK_SPACE, false, "No space"),
+            ValidationCheck(ValidationCheckType.NETWORK_AVAILABILITY, true, "Network OK")
+        )
+        val validation = DownloadValidation(false, checks)
+        
+        assertTrue(validation.hasFailedCheck(ValidationCheckType.URL_VALIDITY))
+        assertTrue(validation.hasFailedCheck(ValidationCheckType.DISK_SPACE))
+        assertFalse(validation.hasFailedCheck(ValidationCheckType.NETWORK_AVAILABILITY))
+        assertFalse(validation.hasFailedCheck(ValidationCheckType.FILE_SIZE))
+    }
+
+    /**
+     * Tests StateTransition timestamp defaults to current time.
+     */
+    @Test
+    fun `StateTransition uses current time as default timestamp`() {
+        val before = System.currentTimeMillis()
+        val transition = StateTransition(
+            from = DownloadState.Idle("test"),
+            to = DownloadState.Validating("test", "Checking")
+        )
+        val after = System.currentTimeMillis()
+        
+        assertTrue(transition.timestamp >= before)
+        assertTrue(transition.timestamp <= after)
+    }
+
+    /**
+     * Tests DownloadInfo isActive() and isTerminal() are mutually exclusive.
+     */
+    @Test
+    fun `DownloadInfo isActive and isTerminal are mutually exclusive`() {
+        val file = tempFolder.newFile("test.zip")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file).build()
+        
+        // Create info for each state and verify mutual exclusivity
+        val states = listOf(
+            DownloadState.Idle("test-id"),
+            DownloadState.Validating("test-id", "Checking"),
+            DownloadState.Connecting("test-id", "url"),
+            DownloadState.Downloading("test-id", DownloadProgress(500, 1000), DownloadSpeed(1024, 512, 5000)),
+            DownloadState.Paused("test-id", DownloadProgress(500, 1000)),
+            DownloadState.Completed("test-id", file, 1000, 10000, 100),
+            DownloadState.Failed("test-id", DownloadError.NetworkError("Error")),
+            DownloadState.Cancelled("test-id", file, 500)
+        )
+        
+        states.forEach { state ->
+            val info = DownloadInfo(
+                id = "test-id",
+                request = request,
+                state = state,
+                file = file,
+                metadata = DownloadMetadata(),
+                progress = DownloadProgressInfo(),
+                timing = DownloadTiming(),
+                serverInfo = ServerInfo()
+            )
+            
+            // A state cannot be both active and terminal
+            val bothTrue = info.isActive() && info.isTerminal()
+            assertFalse("State $state should not be both active and terminal", bothTrue)
+        }
+    }
+
+    /**
+     * Tests DownloadInfo with all components populated.
+     */
+    @Test
+    fun `DownloadInfo aggregates all components correctly`() {
+        val file = tempFolder.newFile("complete.zip")
+        file.writeText("content")
+        val request = DownloadRequest.Builder("https://example.com/file.zip", file)
+            .setChecksum("abc123", "SHA-256")
+            .build()
+        
+        val state = DownloadState.Downloading(
+            "full-test",
+            DownloadProgress(500, 1000),
+            DownloadSpeed(1024, 512, 5000)
+        )
+        
+        val metadata = DownloadMetadata(
+            mimeType = "application/zip",
+            contentLength = 1000,
+            fileName = "file.zip"
+        )
+        
+        val progress = DownloadProgressInfo(
+            bytesDownloaded = 500,
+            totalBytes = 1000,
+            percentage = 50f,
+            currentSpeed = 1024,
+            averageSpeed = 512
+        )
+        
+        val timing = DownloadTiming(
+            startedAt = System.currentTimeMillis() - 10000,
+            retryCount = 2
+        )
+        
+        val serverInfo = ServerInfo(
+            serverName = "nginx",
+            supportsRangeRequests = true
+        )
+        
+        val history = listOf(
+            StateTransition(DownloadState.Idle("full-test"), state, System.currentTimeMillis())
+        )
+        
+        val info = DownloadInfo(
+            id = "full-test",
+            request = request,
+            state = state,
+            file = file,
+            metadata = metadata,
+            progress = progress,
+            timing = timing,
+            serverInfo = serverInfo,
+            history = history
+        )
+        
+        assertEquals("full-test", info.id)
+        assertEquals(request, info.request)
+        assertEquals(state, info.state)
+        assertEquals(file, info.file)
+        assertEquals(metadata, info.metadata)
+        assertEquals(progress, info.progress)
+        assertEquals(timing, info.timing)
+        assertEquals(serverInfo, info.serverInfo)
+        assertEquals(1, info.history.size)
+        assertTrue(info.isActive())
     }
 }
