@@ -1,5 +1,6 @@
 package ir.hrka.download_manager.core
 
+import android.annotation.SuppressLint
 import ir.hrka.download_manager.core.utilities.DownloadError
 import ir.hrka.download_manager.core.utilities.DownloadInfo
 import ir.hrka.download_manager.core.utilities.DownloadMetadata
@@ -10,6 +11,7 @@ import ir.hrka.download_manager.core.utilities.DownloadSpeed
 import ir.hrka.download_manager.core.utilities.DownloadState
 import ir.hrka.download_manager.core.utilities.DownloadTiming
 import ir.hrka.download_manager.core.utilities.DownloadValidation
+import ir.hrka.download_manager.core.utilities.FileSystemErrorType
 import ir.hrka.download_manager.core.utilities.ServerInfo
 import ir.hrka.download_manager.core.utilities.StateTransition
 import ir.hrka.download_manager.core.utilities.ValidationCheck
@@ -48,11 +50,13 @@ import kotlin.coroutines.resumeWithException
  * @property client Optional OkHttpClient (will create default if not provided)
  * @property bufferSize Size of buffer for reading/writing (default 64KB)
  * @property progressUpdateInterval Minimum interval between progress updates (default 200ms)
+ * @property permissionChecker Permission checker for validating Android runtime permissions (default: no-op)
  */
 class OkHttpDownloader(
     client: OkHttpClient? = null,
     private val bufferSize: Int = 64 * 1024, // 64KB
-    private val progressUpdateInterval: Long = 200 // milliseconds
+    private val progressUpdateInterval: Long = 200, // milliseconds
+    private val permissionChecker: PermissionChecker = PermissionChecker.noOp()
 ) : Downloader {
 
     private val client: OkHttpClient = client ?: createDefaultClient()
@@ -170,6 +174,7 @@ class OkHttpDownloader(
     /**
      * Executes a single download attempt.
      */
+    @SuppressLint("UsableSpace")
     private fun executeDownload(
         request: DownloadRequest,
         attemptNumber: Int
@@ -195,11 +200,16 @@ class OkHttpDownloader(
         val httpRequest = buildRequest(request, existingBytes)
 
         // Execute request asynchronously
-        val response = executeAsync(httpRequest)
+        val response = executeAsync(httpRequest, downloadId)
 
         response.use { resp ->
             // Check response status
             if (!resp.isSuccessful) {
+                // CRITICAL FIX: If resuming and server returns 404, delete partial file
+                // to prevent infinite resume loop
+                if (resp.code == 404 && existingBytes > 0 && destination.exists()) {
+                    destination.delete()
+                }
                 throw createHttpException(resp.code, resp.message)
             }
 
@@ -232,7 +242,19 @@ class OkHttpDownloader(
                         val bytesRead = input.read(buffer)
                         if (bytesRead == -1) break
 
-                        output.write(buffer, 0, bytesRead)
+                        // CRITICAL FIX: Better disk full detection
+                        try {
+                            output.write(buffer, 0, bytesRead)
+                        } catch (e: IOException) {
+                            // Check if disk is actually full
+                            val usableSpace = destination.parentFile?.usableSpace ?: 0
+                            if (usableSpace < bufferSize) {
+                                throw IOException("No space left on device", e)
+                            }
+                            // Rethrow if not disk full
+                            throw e
+                        }
+                        
                         downloadedBytes += bytesRead
 
                         val currentTime = System.currentTimeMillis()
@@ -415,10 +437,13 @@ class OkHttpDownloader(
             }
         }
 
-        // Unpause
+        // CRITICAL FIX: Remove old context before calling download() to prevent "duplicate ID" error
+        downloads.remove(downloadId)
+        
+        // Unpause flag
         context.isPaused = false
 
-        // Continue with existing request
+        // Continue with existing request (will create new context)
         return download(context.request)
     }
 
@@ -578,17 +603,18 @@ class OkHttpDownloader(
 
     /**
      * Executes HTTP request asynchronously using suspendCancellableCoroutine.
+     * 
+     * CRITICAL FIX: Now takes downloadId for O(1) context lookup instead of O(n) iteration.
+     * 
+     * @param request The HTTP request to execute
+     * @param downloadId The download ID for storing the call reference
      */
-    private suspend fun executeAsync(request: Request): Response =
+    private suspend fun executeAsync(request: Request, downloadId: String): Response =
         suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
 
-            // Store call for cancellation in matching download context
-            downloads.values.forEach { context ->
-                if (context.request.url == request.url.toString()) {
-                    context.currentCall = call
-                }
-            }
+            // Store call for cancellation - O(1) lookup instead of O(n) iteration
+            downloads[downloadId]?.currentCall = call
 
             // Handle cancellation
             continuation.invokeOnCancellation {
@@ -696,9 +722,46 @@ class OkHttpDownloader(
     /**
      * Validates download request.
      */
+    @SuppressLint("UsableSpace")
     private suspend fun validateInternal(request: DownloadRequest): DownloadValidation =
         withContext(Dispatchers.IO) {
             val checks = mutableListOf<ValidationCheck>()
+
+            // Permission checks (added first for fail-fast)
+            val permissionResult = permissionChecker.checkAllPermissions(
+                destination = request.destination,
+                requireNotifications = false // Notifications are optional for downloads
+            )
+            
+            checks.add(
+                ValidationCheck(
+                    type = ValidationCheckType.INTERNET_PERMISSION,
+                    passed = permissionResult.hasInternet,
+                    message = if (permissionResult.hasInternet) {
+                        "Internet permission granted"
+                    } else {
+                        "INTERNET permission denied. Ensure <uses-permission android:name=\"android.permission.INTERNET\" /> is declared in AndroidManifest.xml"
+                    }
+                )
+            )
+            
+            checks.add(
+                ValidationCheck(
+                    type = ValidationCheckType.STORAGE_PERMISSION,
+                    passed = permissionResult.hasStorage,
+                    message = if (permissionResult.hasStorage) {
+                        "Storage permission granted"
+                    } else {
+                        if (permissionResult.missingPermissions.any { it.contains("WRITE_EXTERNAL_STORAGE") }) {
+                            "WRITE_EXTERNAL_STORAGE permission denied. Request this permission at runtime for API 23+"
+                        } else if (permissionResult.missingPermissions.any { it.contains("MANAGE_EXTERNAL_STORAGE") }) {
+                            "Storage access denied. For custom paths on API 30+, request MANAGE_EXTERNAL_STORAGE or use app-specific directories"
+                        } else {
+                            "Storage write permission denied for destination: ${request.destination}"
+                        }
+                    }
+                )
+            )
 
             // URL validity
             checks.add(
@@ -709,13 +772,20 @@ class OkHttpDownloader(
                 )
             )
 
-            // Destination writable
+            // Destination writable (now checks both permission and file system)
             val parentDir = request.destination.parentFile
+            val isWritable = parentDir == null || parentDir.exists() || parentDir.mkdirs()
             checks.add(
                 ValidationCheck(
                     type = ValidationCheckType.DESTINATION_WRITABLE,
-                    passed = parentDir == null || parentDir.exists() || parentDir.mkdirs(),
-                    message = "Destination directory is not writable"
+                    passed = isWritable && permissionResult.hasStorage,
+                    message = if (!permissionResult.hasStorage) {
+                        "Destination not writable: missing storage permission"
+                    } else if (!isWritable) {
+                        "Destination directory is not writable"
+                    } else {
+                        "Destination is writable"
+                    }
                 )
             )
 
@@ -780,23 +850,85 @@ class OkHttpDownloader(
 
     /**
      * Maps exceptions to typed DownloadError.
+     * 
+     * Enhanced to detect permission-related errors from exception messages.
      */
     private fun mapExceptionToError(exception: Exception): DownloadError {
-        return when (exception) {
-            is IOException -> DownloadError.NetworkError(
-                message = exception.message ?: "Network error occurred",
-                cause = exception
-            )
+        val message = exception.message?.lowercase() ?: ""
+        
+        return when {
+            // Check for permission-related errors first
+            message.contains("permission denied") || message.contains("eacces") -> {
+                DownloadError.FileSystemError(
+                    message = "Permission denied: ${exception.message}",
+                    cause = exception,
+                    errorType = FileSystemErrorType.PERMISSION_DENIED
+                )
+            }
+            
+            message.contains("no space left") || message.contains("enospc") -> {
+                DownloadError.FileSystemError(
+                    message = "Disk full: ${exception.message}",
+                    cause = exception,
+                    errorType = FileSystemErrorType.DISK_FULL
+                )
+            }
+            
+            message.contains("read-only") || message.contains("erofs") -> {
+                DownloadError.FileSystemError(
+                    message = "Read-only file system: ${exception.message}",
+                    cause = exception,
+                    errorType = FileSystemErrorType.PERMISSION_DENIED
+                )
+            }
+            
+            message.contains("file not found") || message.contains("enoent") -> {
+                DownloadError.FileSystemError(
+                    message = "File or directory not found: ${exception.message}",
+                    cause = exception,
+                    errorType = FileSystemErrorType.FILE_NOT_FOUND
+                )
+            }
+            
+            message.contains("file exists") || message.contains("eexist") -> {
+                DownloadError.FileSystemError(
+                    message = "File already exists: ${exception.message}",
+                    cause = exception,
+                    errorType = FileSystemErrorType.FILE_ALREADY_EXISTS
+                )
+            }
+            
+            // Network errors (covers SecurityException for INTERNET permission on some devices)
+            exception is IOException || exception is SecurityException -> {
+                if (exception is SecurityException) {
+                    // SecurityException might indicate missing INTERNET permission
+                    DownloadError.NetworkError(
+                        message = "Network access denied (check INTERNET permission): ${exception.message}",
+                        cause = exception
+                    )
+                } else {
+                    DownloadError.NetworkError(
+                        message = exception.message ?: "Network error occurred",
+                        cause = exception
+                    )
+                }
+            }
 
-            is IllegalArgumentException -> DownloadError.UnknownError(
-                message = exception.message ?: "Invalid argument",
-                cause = exception
-            )
+            // Illegal argument (validation errors)
+            exception is IllegalArgumentException -> {
+                DownloadError.UnknownError(
+                    message = exception.message ?: "Invalid argument",
+                    cause = exception
+                )
+            }
 
-            else -> DownloadError.UnknownError(
-                message = exception.message ?: "Unknown error occurred",
-                cause = exception
-            )
+            // Fallback
+            else -> {
+                DownloadError.UnknownError(
+                    message = exception.message ?: "Unknown error occurred",
+                    cause = exception
+                )
+            }
         }
     }
 
