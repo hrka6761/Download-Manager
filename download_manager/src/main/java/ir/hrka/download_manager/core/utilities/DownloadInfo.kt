@@ -60,7 +60,7 @@ data class DownloadInfo(
      * Checks if download can be retried.
      */
     fun canRetry(): Boolean {
-        return state is DownloadState.Failed && (state as DownloadState.Failed).canRetry
+        return state is DownloadState.Failed && state.canRetry
     }
 }
 
@@ -311,7 +311,9 @@ enum class ValidationCheckType {
     FILE_EXISTS,
     AUTHENTICATION,
     SERVER_SUPPORT,
-    FILE_SIZE
+    FILE_SIZE,
+    INTERNET_PERMISSION,  // Android INTERNET permission check
+    STORAGE_PERMISSION    // Android storage permission check (WRITE_EXTERNAL_STORAGE or scoped storage)
 }
 
 /**
